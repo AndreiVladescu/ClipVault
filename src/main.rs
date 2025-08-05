@@ -1,9 +1,15 @@
 use arboard::{Clipboard, ImageData};
-use std::io::Write;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use png::{Encoder, ColorType, Decoder};
 use base64::{engine::general_purpose, Engine as _};
+use blake3::Hash;
+use std::{
+    fs::OpenOptions,
+    io::{BufRead, BufReader, Write},
+    thread,
+    time::Duration,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClipboardContent {
@@ -76,24 +82,62 @@ fn append_to_history(clipboard: &ClipboardContent) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
-    let current_clipboard = read_clipboard()?;
-    let clipboard = match current_clipboard {
-        Some(c) => c,
-        None => {
-            println!("Clipboard is empty or unsupported type");
-            return Ok(());
-        }
+fn load_history() -> anyhow::Result<Vec<ClipboardEntry>> {
+    let file = match OpenOptions::new().read(true).open(HISTORY_PATH) {
+        Ok(f) => f,
+        Err(_) => return Ok(Vec::new()), // first run means empty history
     };
-
-    match &clipboard {
-        ClipboardContent::Text(text_string) => println!("Text: {}", text_string),
-        ClipboardContent::ImageBase64(image_string) => println!("Image (base-64, {} bytes:\n{})", image_string.len(), image_string),
+    let reader = BufReader::new(file);
+    let mut out = Vec::new();
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let entry: ClipboardEntry = serde_json::from_str(&line)?;
+        out.push(entry);
     }
+    Ok(out)
+}
 
-    append_to_history(&clipboard).expect("Failed to append to history");
+fn clipboard_entry_hash(c: &ClipboardContent) -> Hash {
+    match c {
+        ClipboardContent::Text(text_string) => blake3::hash(text_string.as_bytes()),
+        ClipboardContent::ImageBase64(b64_image) => blake3::hash(b64_image.as_bytes()),
+    }
+}
 
-    set_clipboard(&clipboard).expect("Failed to set clipboard content");
+const HISTORY_PATH: &str = "history.jsonl";
 
-    Ok(())
+fn main() -> anyhow::Result<()> {
+    let mut history = load_history()?;
+    let mut last_hash = history
+        .last()
+        .map(|e| clipboard_entry_hash(&e.content));
+
+    println!("Loaded {} history items. Watching clipboard…", history.len());
+
+    loop {
+        if let Some(content) = read_clipboard()? {
+            let current_hash = clipboard_entry_hash(&content);
+            if Some(current_hash) != last_hash {
+                let entry = ClipboardEntry {
+                    ts: Utc::now(),
+                    content: content.clone(),
+                };
+
+                append_to_history(&entry.content)?;
+                history.push(entry);
+                last_hash = Some(current_hash);
+
+                match content {
+                    ClipboardContent::Text(text_string) => println!("New text clip  (len {})", text_string.len()),
+                    ClipboardContent::ImageBase64(b64) => {
+                        println!("New image clip (base64 {} bytes)", b64.len())
+                    }
+                }
+            }
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
 }
