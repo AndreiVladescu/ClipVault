@@ -65,6 +65,16 @@ fn set_clipboard(content: &ClipboardContent) -> Result<(), arboard::Error> {
     }
 }
 
+fn append_to_history(clipboard: &ClipboardContent) -> anyhow::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("history.jsonl")?;
+    
+    serde_json::to_writer(&mut file, &ClipboardEntry { ts: Utc::now(), content: clipboard.clone() })?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
 
 fn main() -> anyhow::Result<()> {
     let current_clipboard = read_clipboard()?;
@@ -81,15 +91,9 @@ fn main() -> anyhow::Result<()> {
         ClipboardContent::ImageBase64(image_string) => println!("Image (base-64, {} bytes:\n{})", image_string.len(), image_string),
     }
 
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("history.jsonl")?;
-    serde_json::to_writer(&mut file, &ClipboardEntry { ts: Utc::now(), content: clipboard.clone() })?;
-    file.write_all(b"\n")?;
+    append_to_history(&clipboard).expect("Failed to append to history");
 
-    set_clipboard(&clipboard)?;
-    println!("Wrote the same item back to the clipboard.");
+    set_clipboard(&clipboard).expect("Failed to set clipboard content");
 
     Ok(())
 }
