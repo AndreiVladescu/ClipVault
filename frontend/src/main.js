@@ -1,24 +1,57 @@
-import './style.css'
-import javascriptLogo from './javascript.svg'
-import viteLogo from '/vite.svg'
-import { setupCounter } from './counter.js'
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { snapBottomRight } from "./snap.js";   // the helper above
 
-document.querySelector('#app').innerHTML = `
-  <div>
-    <a href="https://vite.dev" target="_blank">
-      <img src="${viteLogo}" class="logo" alt="Vite logo" />
-    </a>
-    <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript" target="_blank">
-      <img src="${javascriptLogo}" class="logo vanilla" alt="JavaScript logo" />
-    </a>
-    <h1>Hello Vite!</h1>
-    <div class="card">
-      <button id="counter" type="button"></button>
-    </div>
-    <p class="read-the-docs">
-      Click on the Vite logo to learn more
-    </p>
-  </div>
-`
+const list   = document.getElementById("list");
+const filter = document.getElementById("filter");
+let   items  = [];               // local history
 
-setupCounter(document.querySelector('#counter'))
+function render() {
+  list.innerHTML = "";
+  const needle = filter.value.toLowerCase();
+  items
+    .slice()                       // copy
+    .reverse()                     // newest first
+    .filter(e => {
+      if (!needle) return true;
+      return JSON.stringify(e.content).toLowerCase().includes(needle);
+    })
+    .forEach(addLi);
+}
+
+function addLi(entry) {
+  const li = document.createElement("li");
+
+  // preview
+  if (entry.content.Text) {
+    const span = document.createElement("span");
+    span.className = "text";
+    span.textContent = entry.content.Text.replace(/\s+/g, " ").trim();
+    li.append(span);
+  } else {
+    const img = document.createElement("img");
+    img.src = `data:image/png;base64,${entry.content.ImageBase64}`;
+    li.append(img);
+  }
+
+  // click -> restore
+  li.onclick = () => invoke("restore_clip", { entry });
+
+  list.append(li);
+}
+
+/* ---------- bootstrap ---------- */
+filter.oninput = render;
+snapBottomRight();
+
+// initial history
+invoke("get_history").then(hist => {
+  items = hist;
+  render();
+});
+
+// live updates
+listen("clip", evt => {
+  items.push(evt.payload);
+  render();
+});
