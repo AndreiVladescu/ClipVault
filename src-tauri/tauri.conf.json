@@ -5,7 +5,8 @@
   "identifier": "com.tauri.dev",
   "build": {
     "beforeDevCommand":  "npm --prefix ../frontend run dev",
-    "beforeBuildCommand": "npm --prefix ../frontend run build"
+    "beforeBuildCommand": "npm --prefix ../frontend run build",
+    "frontendDist": "../frontend"
   },
   "app": {
     "windows": [
