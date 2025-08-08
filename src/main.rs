@@ -9,6 +9,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     thread,
     time::Duration,
+    collections::HashMap
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,9 +28,32 @@ struct ClipApp {
     rx: crossbeam::channel::Receiver<ClipboardEntry>,
     history: Vec<ClipboardEntry>,
     filter: String,
+    tex_cache: HashMap<String, egui::TextureHandle>,
 }
 
 const HISTORY_PATH: &str = "history.jsonl";
+
+fn ensure_texture_for_b64(
+    cache: &mut HashMap<String, egui::TextureHandle>,
+    ctx: &egui::Context,
+    key: &str,
+    b64: &str,
+) {
+    if cache.contains_key(key) { return; }
+
+    if let Ok(img) = base64_to_imagedata(b64) {
+        let color: egui::ColorImage = egui::ColorImage::from_rgba_unmultiplied(
+            [img.width, img.height],
+            &img.bytes,
+        );
+        let tex: egui::TextureHandle = ctx.load_texture(
+            format!("thumb-{key}"),
+            color,
+            egui::TextureOptions::LINEAR, // smooth when scaled down
+        );
+        cache.insert(key.to_owned(), tex);
+    }
+}
 
 pub fn image_to_base64(img: &ImageData) -> String {
     let mut png_bytes: Vec<u8> = Vec::new();
@@ -187,8 +211,23 @@ impl eframe::App for ClipApp {
                                 ui.label(egui::RichText::new(t));
                             }
                             ClipboardContent::ImageBase64(b64) => {
-                                ui.label(format!("<image {} bytes>", b64.len()));
-                                // (Thumbnails later)
+                                // stable key for the cache (based on content)
+                                let key = clipboard_entry_hash(&entry.content).to_hex().to_string();
+                                println!("Image base64: {}", b64);
+                                ensure_texture_for_b64(&mut self.tex_cache, ctx, &key, b64);
+
+                                if let Some(tex) = self.tex_cache.get(&key) {
+                                    // keep aspect ratio; 128 px wide thumbnail
+                                    let [w, h] = tex.size();
+                                    let w = w as f32;
+                                    let h = h as f32;
+                                    let thumb_w = 128.0;
+                                    let thumb_h = thumb_w * (h / w);
+
+                                    ui.image((tex.id(), egui::vec2(thumb_w, thumb_h)));
+                                } else {
+                                    ui.label("<image decode failed>");
+                                }
                             }
                         }
                     });
@@ -219,6 +258,7 @@ fn main() -> anyhow::Result<()> {
                     rx,
                     history,
                     filter: String::new(),
+                    tex_cache: HashMap::new(),
                 })
             )
         }),
