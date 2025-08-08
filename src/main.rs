@@ -11,7 +11,6 @@ use std::{
     time::Duration,
 };
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClipboardContent {
     Text(String),
@@ -24,9 +23,17 @@ pub struct ClipboardEntry {
     pub content: ClipboardContent,
 }
 
+struct ClipApp {
+    rx: crossbeam::channel::Receiver<ClipboardEntry>,
+    history: Vec<ClipboardEntry>,
+    filter: String,
+}
+
+const HISTORY_PATH: &str = "history.jsonl";
+
 pub fn image_to_base64(img: &ImageData) -> String {
-    let mut png_bytes = Vec::new();
-    let mut enc = Encoder::new(&mut png_bytes, img.width as u32, img.height as u32);
+    let mut png_bytes: Vec<u8> = Vec::new();
+    let mut enc: Encoder<'static, &mut Vec<u8>> = Encoder::new(&mut png_bytes, img.width as u32, img.height as u32);
     enc.set_color(ColorType::Rgba);
     enc.set_depth(png::BitDepth::Eight);
     enc.write_header()
@@ -37,11 +44,11 @@ pub fn image_to_base64(img: &ImageData) -> String {
 }
 
 pub fn base64_to_imagedata(b64: &str) -> anyhow::Result<ImageData<'_>> {
-    let bytes = general_purpose::STANDARD.decode(b64)?;
-    let cursor = std::io::Cursor::new(bytes);
-    let mut reader = Decoder::new(cursor).read_info()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf)?;
+    let bytes: Vec<u8> = general_purpose::STANDARD.decode(b64)?;
+    let cursor: std::io::Cursor<Vec<u8>> = std::io::Cursor::new(bytes);
+    let mut reader: png::Reader<std::io::Cursor<Vec<u8>>> = Decoder::new(cursor).read_info()?;
+    let mut buf: Vec<u8> = vec![0; reader.output_buffer_size()];
+    let info: png::OutputInfo = reader.next_frame(&mut buf)?;
     Ok(ImageData {
         width: info.width as usize,
         height: info.height as usize,
@@ -50,7 +57,7 @@ pub fn base64_to_imagedata(b64: &str) -> anyhow::Result<ImageData<'_>> {
 }
 
 fn read_clipboard() -> Result<Option<ClipboardContent>, arboard::Error> {
-    let mut clipboard = Clipboard::new()?;
+    let mut clipboard: Clipboard = Clipboard::new()?;
 
     if let Ok(txt) = clipboard.get_text() {
         return Ok(Some(ClipboardContent::Text(txt)));
@@ -62,18 +69,18 @@ fn read_clipboard() -> Result<Option<ClipboardContent>, arboard::Error> {
 }
 
 fn set_clipboard(content: &ClipboardContent) -> Result<(), arboard::Error> {
-    let mut clipboard = Clipboard::new()?;
+    let mut clipboard: Clipboard = Clipboard::new()?;
     match content {
         ClipboardContent::Text(t) => clipboard.set_text(t.clone()),
         ClipboardContent::ImageBase64(b64) => {
-            let img = base64_to_imagedata(b64).map_err(|_| arboard::Error::ContentNotAvailable)?;
+            let img: ImageData<'_> = base64_to_imagedata(b64).map_err(|_| arboard::Error::ContentNotAvailable)?;
             clipboard.set_image(img)
         }
     }
 }
 
 fn append_to_history(entry: &ClipboardEntry) -> anyhow::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
+    let mut file: std::fs::File = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(HISTORY_PATH)?;
@@ -83,14 +90,14 @@ fn append_to_history(entry: &ClipboardEntry) -> anyhow::Result<()> {
 }
 
 fn load_history() -> anyhow::Result<Vec<ClipboardEntry>> {
-    let file = match OpenOptions::new().read(true).open(HISTORY_PATH) {
+    let file: std::fs::File = match OpenOptions::new().read(true).open(HISTORY_PATH) {
         Ok(f) => f,
         Err(_) => return Ok(Vec::new()), // first run means empty history
     };
-    let reader = BufReader::new(file);
-    let mut out = Vec::new();
+    let reader: BufReader<std::fs::File> = BufReader::new(file);
+    let mut out: Vec<ClipboardEntry> = Vec::new();
     for line in reader.lines() {
-        let line = line?;
+        let line: String = line?;
         if line.trim().is_empty() {
             continue;
         }
@@ -107,8 +114,6 @@ fn clipboard_entry_hash(c: &ClipboardContent) -> Hash {
     }
 }
 
-const HISTORY_PATH: &str = "history.jsonl";
-
 fn spawn_watcher(
     tx: crossbeam::channel::Sender<ClipboardEntry>,
     mut last_hash: Option<Hash>,
@@ -117,9 +122,9 @@ fn spawn_watcher(
         loop {
             match read_clipboard() {
                 Ok(Some(content)) => {
-                    let h = clipboard_entry_hash(&content);
+                    let h: Hash = clipboard_entry_hash(&content);
                     if Some(h) != last_hash {
-                        let entry = ClipboardEntry { ts: Utc::now(), content: content.clone() };
+                        let entry: ClipboardEntry = ClipboardEntry { ts: Utc::now(), content: content.clone() };
                         // persist to disk
                         let _ = append_to_history(&entry);
                         // send to UI
@@ -137,13 +142,6 @@ fn spawn_watcher(
     });
 }
 
-struct ClipApp {
-    rx: crossbeam::channel::Receiver<ClipboardEntry>,
-    history: Vec<ClipboardEntry>,
-    filter: String,
-}
-
-
 impl eframe::App for ClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // pull any new entries from the watcher
@@ -151,7 +149,7 @@ impl eframe::App for ClipApp {
             self.history.push(entry);
         }
 
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
+        egui::TopBottomPanel::top("top").show(ctx, |ui: &mut egui::Ui| {
             ui.horizontal(|ui| {
                 ui.heading("ClipVault");
                 ui.separator();
@@ -160,9 +158,9 @@ impl eframe::App for ClipApp {
             });
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                let q = self.filter.to_lowercase();
+        egui::CentralPanel::default().show(ctx, |ui: &mut egui::Ui| {
+            egui::ScrollArea::vertical().show(ui, |ui: &mut egui::Ui| {
+                let q: String = self.filter.to_lowercase();
                 for entry in self.history.iter().rev() {
                     if !q.is_empty() {
                         if let ClipboardContent::Text(t) = &entry.content {
@@ -174,14 +172,14 @@ impl eframe::App for ClipApp {
                         }
                     }
 
-                    ui.horizontal(|ui| {
+                    ui.horizontal(|ui: &mut egui::Ui| {
                         if ui.button("📋").on_hover_text("Restore to clipboard").clicked() {
                             let _ = set_clipboard(&entry.content);
                         }
 
                         match &entry.content {
                             ClipboardContent::Text(t) => {
-                                let mut t = t.clone();
+                                let mut t: String = t.clone();
                                 if let Some((idx, _)) = t.match_indices('\n').nth(4) {
                                     t = t[..idx].to_string();
                                     t.push_str("\n...");
