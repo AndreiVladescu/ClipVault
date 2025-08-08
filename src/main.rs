@@ -1,15 +1,16 @@
 use arboard::{Clipboard, ImageData};
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
-use png::{Encoder, ColorType, Decoder};
 use base64::{engine::general_purpose, Engine as _};
 use blake3::Hash;
+use chrono::{DateTime, Utc};
+use png::{ColorType, Decoder, Encoder};
+use serde::{Deserialize, Serialize};
 use std::{
     fs::OpenOptions,
     io::{BufRead, BufReader, Write},
     thread,
     time::Duration,
 };
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClipboardContent {
@@ -71,13 +72,12 @@ fn set_clipboard(content: &ClipboardContent) -> Result<(), arboard::Error> {
     }
 }
 
-fn append_to_history(clipboard: &ClipboardContent) -> anyhow::Result<()> {
+fn append_to_history(entry: &ClipboardEntry) -> anyhow::Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open("history.jsonl")?;
-    
-    serde_json::to_writer(&mut file, &ClipboardEntry { ts: Utc::now(), content: clipboard.clone() })?;
+        .open(HISTORY_PATH)?;
+    serde_json::to_writer(&mut file, entry)?;
     file.write_all(b"\n")?;
     Ok(())
 }
@@ -109,35 +109,129 @@ fn clipboard_entry_hash(c: &ClipboardContent) -> Hash {
 
 const HISTORY_PATH: &str = "history.jsonl";
 
-fn main() -> anyhow::Result<()> {
-    let mut history = load_history()?;
-    let mut last_hash = history
-        .last()
-        .map(|e| clipboard_entry_hash(&e.content));
-
-    println!("Loaded {} history items. Watching clipboard…", history.len());
-
-    loop {
-        if let Some(content) = read_clipboard()? {
-            let current_hash = clipboard_entry_hash(&content);
-            if Some(current_hash) != last_hash {
-                let entry = ClipboardEntry {
-                    ts: Utc::now(),
-                    content: content.clone(),
-                };
-
-                append_to_history(&entry.content)?;
-                history.push(entry);
-                last_hash = Some(current_hash);
-
-                match content {
-                    ClipboardContent::Text(text_string) => println!("New text clip  (len {})", text_string.len()),
-                    ClipboardContent::ImageBase64(b64) => {
-                        println!("New image clip (base64 {} bytes)", b64.len())
+fn spawn_watcher(
+    tx: crossbeam::channel::Sender<ClipboardEntry>,
+    mut last_hash: Option<Hash>,
+) {
+    thread::spawn(move || {
+        loop {
+            match read_clipboard() {
+                Ok(Some(content)) => {
+                    let h = clipboard_entry_hash(&content);
+                    if Some(h) != last_hash {
+                        let entry = ClipboardEntry { ts: Utc::now(), content: content.clone() };
+                        // persist to disk
+                        let _ = append_to_history(&entry);
+                        // send to UI
+                        let _ = tx.send(entry);
+                        last_hash = Some(h);
                     }
                 }
+                Ok(None) => {}        // nothing on clipboard / unsupported
+                Err(_e) => {          // clipboard temporarily unavailable? ignore and retry
+                    // eprintln!("clipboard read error: {e:?}");
+                }
             }
+            thread::sleep(Duration::from_millis(500));
         }
-        thread::sleep(Duration::from_millis(500));
+    });
+}
+
+struct ClipApp {
+    rx: crossbeam::channel::Receiver<ClipboardEntry>,
+    history: Vec<ClipboardEntry>,
+    filter: String,
+}
+
+
+impl eframe::App for ClipApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // pull any new entries from the watcher
+        for entry in self.rx.try_iter() {
+            self.history.push(entry);
+        }
+
+        egui::TopBottomPanel::top("top").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading("ClipVault");
+                ui.separator();
+                ui.label("Filter:");
+                ui.text_edit_singleline(&mut self.filter);
+            });
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let q = self.filter.to_lowercase();
+                for entry in self.history.iter().rev() {
+                    if !q.is_empty() {
+                        if let ClipboardContent::Text(t) = &entry.content {
+                            if !t.to_lowercase().contains(&q) {
+                                continue;
+                            }
+                        } else {
+                            // filter only applies to text for now
+                        }
+                    }
+
+                    ui.horizontal(|ui| {
+                        if ui.button("📋").on_hover_text("Restore to clipboard").clicked() {
+                            let _ = set_clipboard(&entry.content);
+                        }
+
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "[{}]",
+                                entry.ts.format("%H:%M:%S")
+                            ))
+                            .monospace()
+                            .color(egui::Color32::GRAY),
+                        );
+
+                        match &entry.content {
+                            ClipboardContent::Text(t) => {
+                                ui.label(egui::RichText::new(t));
+                            }
+                            ClipboardContent::ImageBase64(b64) => {
+                                ui.label(format!("<image {} bytes>", b64.len()));
+                                // (We can add thumbnails later)
+                            }
+                        }
+                    });
+                }
+            });
+        });
     }
+}
+
+fn main() -> anyhow::Result<()> {
+    // load existing history
+    let mut history = load_history()?;
+    let last_hash = history.last().map(|e| clipboard_entry_hash(&e.content));
+
+    // channel for watcher -> UI
+    let (tx, rx) = crossbeam::channel::unbounded();
+    spawn_watcher(tx, last_hash);
+
+    let options = eframe::NativeOptions::default();
+
+    // NOTE: closure must return Result<Box<dyn App>, _>
+    let res = eframe::run_native(
+        "ClipVault",
+        options,
+        Box::new(|_cc| {
+            Ok::<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>>(
+                Box::new(ClipApp {
+                    rx,
+                    history,
+                    filter: String::new(),
+                })
+            )
+        }),
+    );
+
+    if let Err(e) = res {
+        eprintln!("eframe error: {e}");
+    }
+    Ok(())
 }
