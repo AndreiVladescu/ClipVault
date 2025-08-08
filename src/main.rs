@@ -179,22 +179,18 @@ impl eframe::App for ClipApp {
                             let _ = set_clipboard(&entry.content);
                         }
 
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "[{}]",
-                                entry.ts.format("%H:%M:%S")
-                            ))
-                            .monospace()
-                            .color(egui::Color32::GRAY),
-                        );
-
                         match &entry.content {
                             ClipboardContent::Text(t) => {
+                                let mut t = t.clone();
+                                if let Some((idx, _)) = t.match_indices('\n').nth(4) {
+                                    t = t[..idx].to_string();
+                                    t.push_str("\n...");
+                                }
                                 ui.label(egui::RichText::new(t));
                             }
                             ClipboardContent::ImageBase64(b64) => {
                                 ui.label(format!("<image {} bytes>", b64.len()));
-                                // (We can add thumbnails later)
+                                // (Thumbnails later)
                             }
                         }
                     });
