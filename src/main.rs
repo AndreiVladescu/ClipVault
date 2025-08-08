@@ -36,7 +36,7 @@ pub fn image_to_base64(img: &ImageData) -> String {
     general_purpose::STANDARD.encode(png_bytes)
 }
 
-pub fn base64_to_imagedata(b64: &str) -> anyhow::Result<ImageData> {
+pub fn base64_to_imagedata(b64: &str) -> anyhow::Result<ImageData<'_>> {
     let bytes = general_purpose::STANDARD.decode(b64)?;
     let cursor = std::io::Cursor::new(bytes);
     let mut reader = Decoder::new(cursor).read_info()?;
@@ -206,7 +206,7 @@ impl eframe::App for ClipApp {
 
 fn main() -> anyhow::Result<()> {
     // load existing history
-    let mut history = load_history()?;
+    let history = load_history()?;
     let last_hash = history.last().map(|e| clipboard_entry_hash(&e.content));
 
     // channel for watcher -> UI
