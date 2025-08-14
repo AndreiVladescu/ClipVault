@@ -4,12 +4,15 @@ use blake3::Hash;
 use chrono::{DateTime, Utc};
 use png::{ColorType, Decoder, Encoder};
 use serde::{Deserialize, Serialize};
+use egui::{ColorImage};
+use image::{GenericImageView};
 use std::{
     fs::OpenOptions,
     io::{BufRead, BufReader, Write},
     thread,
     time::Duration,
-    collections::{HashMap, HashSet}
+    collections::{HashMap, HashSet},
+    path::Path
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +33,9 @@ struct ClipApp {
     seen: HashSet<String>,
     filter: String,
     tex_cache: HashMap<String, egui::TextureHandle>,
+
+    show_settings: bool,
+    show_timestamps: bool,
 }
 
 #[derive(Clone)]
@@ -46,8 +52,8 @@ enum LogRec {
     Touch { key: String, ts: DateTime<Utc> },
 }
 
-
 const HISTORY_PATH: &str = "history.jsonl";
+
 pub fn compact_history_log() -> anyhow::Result<()> {
     use std::collections::HashMap;
 
@@ -100,6 +106,27 @@ pub fn compact_history_log() -> anyhow::Result<()> {
     let _ = std::fs::remove_file(path);
     std::fs::rename(tmp, path)?;
     Ok(())
+}
+
+// Image loader for buttons
+fn load_image_from_path(ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
+    let path = Path::new(path);
+    let img = image::open(path).ok()?;
+    let img = img.to_rgba8();
+
+    let (width, height) = img.dimensions();
+    let pixels = img.as_raw();
+
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+        [width as usize, height as usize],
+        &pixels,
+    );
+
+    Some(ctx.load_texture(
+        path.to_string_lossy(),
+        color_image,
+        egui::TextureOptions::LINEAR,
+    ))
 }
 
 fn ensure_texture_for_b64(
@@ -260,6 +287,7 @@ fn spawn_watcher(
         }
     });
 }
+
 impl eframe::App for ClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         use chrono::Utc;
@@ -287,14 +315,41 @@ impl eframe::App for ClipApp {
             }
         }
 
+        // Top panel
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("ClipVault");
+                ui.heading(egui::RichText::new("ClipVault").size(24.0));
                 ui.separator();
-                ui.label("Filter:");
+                ui.label(egui::RichText::new("Filter").size(18.0));
                 ui.text_edit_singleline(&mut self.filter);
+                if let Some(tex) = load_image_from_path(ctx, "img/settings.png") {
+                    let size = egui::vec2(24.0, 24.0);
+                    let sized_tex = egui::load::SizedTexture { id: tex.id(), size };
+                    let settings_icon = egui::ImageButton::new(sized_tex).corner_radius(4.0);
+                    if ui.add(settings_icon.frame(true)).clicked() {
+                        self.show_settings = !self.show_settings;
+                    }
+                } else {
+                    println!("Failed to load settings icon image");
+                }
             });
         });
+
+        // Settings window
+        if self.show_settings {
+            egui::Window::new("Settings")
+                .open(&mut self.show_settings)
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.checkbox(&mut self.show_timestamps, "Show timestamps");
+                    ui.button("Clear history").clicked().then(|| {
+                        self.history.clear();
+                        self.seen.clear();
+                        let _ = std::fs::remove_file(HISTORY_PATH);
+                    });
+                });
+        }
 
         let mut pending_restore: Option<ClipboardEntry> = None;
 
@@ -326,11 +381,13 @@ impl eframe::App for ClipApp {
                             pending_restore = Some(entry.clone());
                         }
 
-                        ui.label(
-                            egui::RichText::new(format!("[{}]", entry.ts.format("%H:%M:%S")))
-                                .monospace()
-                                .color(egui::Color32::GRAY),
-                        );
+                        if self.show_timestamps {
+                            ui.label(
+                                egui::RichText::new(format!("[{}]", entry.ts.format("%H:%M:%S")))
+                                    .monospace()
+                                    .color(egui::Color32::GRAY),
+                            );
+                        }
 
                         match (&entry.content, tex_opt) {
                             (ClipboardContent::Text(t), _) => {
@@ -386,7 +443,6 @@ impl eframe::App for ClipApp {
     }
 }
 
-
 fn main() -> anyhow::Result<()> {
     if let Err(e) = compact_history_log() {
         eprintln!("Compaction failed: {e}");
@@ -412,6 +468,8 @@ fn main() -> anyhow::Result<()> {
                     seen,
                     filter: String::new(),
                     tex_cache: HashMap::new(),
+                    show_settings: false,
+                    show_timestamps: false,
                 })
             )
         }),
