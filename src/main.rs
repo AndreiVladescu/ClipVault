@@ -9,7 +9,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     thread,
     time::Duration,
-    collections::HashMap
+    collections::{HashMap, HashSet}
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,9 +27,18 @@ pub struct ClipboardEntry {
 struct ClipApp {
     rx: crossbeam::channel::Receiver<ClipboardEntry>,
     history: Vec<ClipboardEntry>,
+    seen: HashSet<String>,
     filter: String,
     tex_cache: HashMap<String, egui::TextureHandle>,
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum LogRec {
+    Put { key: String, ts: DateTime<Utc>, content: ClipboardContent },
+    Touch { key: String, ts: DateTime<Utc> },
+}
+
 
 const HISTORY_PATH: &str = "history.jsonl";
 
@@ -80,6 +89,24 @@ pub fn base64_to_imagedata(b64: &str) -> anyhow::Result<ImageData<'_>> {
     })
 }
 
+fn append_put(key: &str, content: &ClipboardContent, ts: DateTime<Utc>) -> anyhow::Result<()> {
+    let mut f = OpenOptions::new().create(true).append(true).open(HISTORY_PATH)?;
+    serde_json::to_writer(&mut f, &LogRec::Put { key: key.to_string(), ts, content: content.clone() })?;
+    f.write_all(b"\n")?;
+    Ok(())
+}
+
+fn append_touch(key: &str, ts: DateTime<Utc>) -> anyhow::Result<()> {
+    let mut f = OpenOptions::new().create(true).append(true).open(HISTORY_PATH)?;
+    serde_json::to_writer(&mut f, &LogRec::Touch { key: key.to_string(), ts })?;
+    f.write_all(b"\n")?;
+    Ok(())
+}
+
+fn content_key(c: &ClipboardContent) -> String {
+    clipboard_entry_hash(c).to_hex().to_string()
+}
+
 fn read_clipboard() -> Result<Option<ClipboardContent>, arboard::Error> {
     let mut clipboard: Clipboard = Clipboard::new()?;
 
@@ -103,33 +130,42 @@ fn set_clipboard(content: &ClipboardContent) -> Result<(), arboard::Error> {
     }
 }
 
-fn append_to_history(entry: &ClipboardEntry) -> anyhow::Result<()> {
-    let mut file: std::fs::File = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(HISTORY_PATH)?;
-    serde_json::to_writer(&mut file, entry)?;
-    file.write_all(b"\n")?;
-    Ok(())
+fn load_history_mru() -> anyhow::Result<Vec<ClipboardEntry>> {
+    use std::collections::HashMap;
+    let file = match OpenOptions::new().read(true).open(HISTORY_PATH) {
+        Ok(f) => f, Err(_) => return Ok(Vec::new()),
+    };
+    let reader = BufReader::new(file);
+
+    let mut map: HashMap<String, (ClipboardContent, DateTime<Utc>)> = HashMap::new();
+
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() { continue; }
+        let rec: LogRec = serde_json::from_str(&line)?;
+        match rec {
+            LogRec::Put { key, ts, content } => {
+                let e = map.entry(key).or_insert((content, ts));
+                if ts > e.1 { e.1 = ts; }
+                else { e.0 = e.0.clone(); } // content already set
+                e.0 = e.0.clone();
+            }
+            LogRec::Touch { key, ts } => {
+                if let Some(e) = map.get_mut(&key) {
+                    e.1 = ts;
+                } // else: touched before put (rare) — ignore or store a placeholder
+            }
+        }
+    }
+
+    let mut v: Vec<ClipboardEntry> = map
+        .into_iter()
+        .map(|(_k, (content, ts))| ClipboardEntry { ts, content })
+        .collect();
+    v.sort_by(|a, b| b.ts.cmp(&a.ts)); // newest first
+    Ok(v)
 }
 
-fn load_history() -> anyhow::Result<Vec<ClipboardEntry>> {
-    let file: std::fs::File = match OpenOptions::new().read(true).open(HISTORY_PATH) {
-        Ok(f) => f,
-        Err(_) => return Ok(Vec::new()), // first run means empty history
-    };
-    let reader: BufReader<std::fs::File> = BufReader::new(file);
-    let mut out: Vec<ClipboardEntry> = Vec::new();
-    for line in reader.lines() {
-        let line: String = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let entry: ClipboardEntry = serde_json::from_str(&line)?;
-        out.push(entry);
-    }
-    Ok(out)
-}
 
 fn clipboard_entry_hash(c: &ClipboardContent) -> Hash {
     match c {
@@ -149,31 +185,49 @@ fn spawn_watcher(
                     let h: Hash = clipboard_entry_hash(&content);
                     if Some(h) != last_hash {
                         let entry: ClipboardEntry = ClipboardEntry { ts: Utc::now(), content: content.clone() };
-                        // persist to disk
-                        let _ = append_to_history(&entry);
                         // send to UI
                         let _ = tx.send(entry);
                         last_hash = Some(h);
                     }
                 }
                 Ok(None) => {}        // nothing on clipboard / unsupported
-                Err(_e) => {          // clipboard temporarily unavailable? ignore and retry
-                    // eprintln!("clipboard read error: {e:?}");
+                Err(_e) => {          
+                    // clipboard temporarily unavailable? ignore and retry
+                    eprintln!("clipboard read error: {_e:?}");
                 }
             }
             thread::sleep(Duration::from_millis(500));
         }
     });
 }
-
 impl eframe::App for ClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // pull any new entries from the watcher
-        for entry in self.rx.try_iter() {
-            self.history.push(entry);
+        use chrono::Utc;
+        
+        while let Ok(mut entry) = self.rx.try_recv() {
+            let key = content_key(&entry.content);
+
+            if self.seen.contains(&key) {
+                // TOUCH: update ts, bump to front (end of vec shown in reverse)
+                entry.ts = Utc::now();
+                if let Some(pos) = self.history.iter().position(|e| content_key(&e.content) == key) {
+                    let mut existing = self.history.remove(pos);
+                    existing.ts = entry.ts;
+                    self.history.push(existing);
+                } else {
+                    // If not present (e.g., after filtering / truncation), just push
+                    self.history.push(entry.clone());
+                }
+                let _ = append_touch(&key, entry.ts);
+            } else {
+                // PUT: first time we see this content
+                self.seen.insert(key.clone());
+                self.history.push(entry.clone());
+                let _ = append_put(&key, &entry.content, entry.ts);
+            }
         }
 
-        egui::TopBottomPanel::top("top").show(ctx, |ui: &mut egui::Ui| {
+        egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("ClipVault");
                 ui.separator();
@@ -182,73 +236,112 @@ impl eframe::App for ClipApp {
             });
         });
 
-        egui::CentralPanel::default().show(ctx, |ui: &mut egui::Ui| {
-            egui::ScrollArea::vertical().show(ui, |ui: &mut egui::Ui| {
-                let q: String = self.filter.to_lowercase();
-                for entry in self.history.iter().rev() {
+        let mut pending_restore: Option<ClipboardEntry> = None;
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let q = self.filter.to_lowercase();
+
+                for idx in (0..self.history.len()).rev() {
+                    let entry = self.history[idx].clone();
                     if !q.is_empty() {
                         if let ClipboardContent::Text(t) = &entry.content {
                             if !t.to_lowercase().contains(&q) {
                                 continue;
                             }
-                        } else {
-                            // filter only applies to text for now
                         }
                     }
+                    let (_key, tex_opt) = match &entry.content {
+                        ClipboardContent::ImageBase64(b64) => {
+                            let k = content_key(&entry.content);
+                            ensure_texture_for_b64(&mut self.tex_cache, ctx, &k, b64);
+                            let handle = self.tex_cache.get(&k).cloned();
+                            (Some(k), handle)
+                        }
+                        _ => (None, None),
+                    };
 
-                    ui.horizontal(|ui: &mut egui::Ui| {
+                    ui.horizontal(|ui| {
                         if ui.button("📋").on_hover_text("Restore to clipboard").clicked() {
-                            let _ = set_clipboard(&entry.content);
+                            pending_restore = Some(entry.clone());
                         }
 
-                        match &entry.content {
-                            ClipboardContent::Text(t) => {
-                                let mut t: String = t.clone();
-                                if let Some((idx, _)) = t.match_indices('\n').nth(4) {
-                                    t = t[..idx].to_string();
-                                    t.push_str("\n...");
+                        ui.label(
+                            egui::RichText::new(format!("[{}]", entry.ts.format("%H:%M:%S")))
+                                .monospace()
+                                .color(egui::Color32::GRAY),
+                        );
+
+                        match (&entry.content, tex_opt) {
+                            (ClipboardContent::Text(t), _) => {
+                                let mut s = t.clone();
+                                if let Some((cut, _)) = s.match_indices('\n').nth(4) {
+                                    s.truncate(cut);
+                                    s.push_str("\n…");
                                 }
-                                ui.label(egui::RichText::new(t));
+                                ui.label(egui::RichText::new(s));
                             }
-                            ClipboardContent::ImageBase64(b64) => {
-                                // stable key for the cache (based on content)
-                                let key = clipboard_entry_hash(&entry.content).to_hex().to_string();
-                                println!("Image base64: {}", b64);
-                                ensure_texture_for_b64(&mut self.tex_cache, ctx, &key, b64);
-
-                                if let Some(tex) = self.tex_cache.get(&key) {
-                                    // keep aspect ratio; 128 px wide thumbnail
-                                    let [w, h] = tex.size();
-                                    let w = w as f32;
-                                    let h = h as f32;
-                                    let thumb_w = 128.0;
-                                    let thumb_h = thumb_w * (h / w);
-
-                                    ui.image((tex.id(), egui::vec2(thumb_w, thumb_h)));
-                                } else {
-                                    ui.label("<image decode failed>");
-                                }
+                            (ClipboardContent::ImageBase64(b64), Some(tex)) => {
+                                // Keep aspect; max width 128
+                                let [w, h] = tex.size();
+                                let (w, h) = (w as f32, h as f32);
+                                let max_w = 128.0;
+                                let scale = (max_w / w).min(1.0);
+                                let w_scale = w * scale as f32;
+                                let h_scale = h * scale as f32;
+                                // ui.image(&tex.id(), egui::vec2(w_scale, h_scale));
+                                ui.image((tex.id(), egui::vec2(w_scale, h_scale)));
+                                ui.label(format!("({} bytes)", b64.len()));
+                            }
+                            (ClipboardContent::ImageBase64(b64), None) => {
+                                ui.label(format!("<image {} bytes>", b64.len()));
                             }
                         }
                     });
                 }
             });
-        });
+        });         
+
+        if let Some(entry) = pending_restore {
+            let _ = set_clipboard(&entry.content);
+            let key = content_key(&entry.content);
+            let now = Utc::now();
+
+            if self.seen.contains(&key) {
+                if let Some(pos) = self.history.iter().position(|e| content_key(&e.content) == key) {
+                    let mut existing = self.history.remove(pos);
+                    existing.ts = now;
+                    self.history.push(existing);
+                } else {
+                    self.history.push(ClipboardEntry { ts: now, content: entry.content.clone() });
+                }
+                let _ = append_touch(&key, now);
+            } else {
+                self.seen.insert(key.clone());
+                let new_entry = ClipboardEntry { ts: now, content: entry.content.clone() };
+                self.history.push(new_entry.clone());
+                let _ = append_put(&key, &new_entry.content, now);
+            }
+        }
     }
 }
 
+
 fn main() -> anyhow::Result<()> {
-    // load existing history
-    let history = load_history()?;
+    // Build MRU from the append-only log:
+    let history = load_history_mru()?;
+
+    // Last hash (to avoid duplicate first tick): newest is at the END of `history`
     let last_hash = history.last().map(|e| clipboard_entry_hash(&e.content));
+
+    // Keep a set of keys we’ve seen (decide put vs touch)
+    let seen: HashSet<String> = history.iter().map(|e| content_key(&e.content)).collect();
 
     // channel for watcher -> UI
     let (tx, rx) = crossbeam::channel::unbounded();
     spawn_watcher(tx, last_hash);
 
     let options = eframe::NativeOptions::default();
-
-    // NOTE: closure must return Result<Box<dyn App>, _>
     let res = eframe::run_native(
         "ClipVault",
         options,
@@ -257,6 +350,7 @@ fn main() -> anyhow::Result<()> {
                 Box::new(ClipApp {
                     rx,
                     history,
+                    seen,
                     filter: String::new(),
                     tex_cache: HashMap::new(),
                 })
@@ -264,8 +358,6 @@ fn main() -> anyhow::Result<()> {
         }),
     );
 
-    if let Err(e) = res {
-        eprintln!("eframe error: {e}");
-    }
+    if let Err(e) = res { eprintln!("eframe error: {e}"); }
     Ok(())
 }
