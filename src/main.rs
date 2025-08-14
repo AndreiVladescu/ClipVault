@@ -32,6 +32,13 @@ struct ClipApp {
     tex_cache: HashMap<String, egui::TextureHandle>,
 }
 
+#[derive(Clone)]
+struct Agg {
+    content: ClipboardContent,
+    created_ts: DateTime<Utc>,
+    last_ts: DateTime<Utc>,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum LogRec {
@@ -41,6 +48,59 @@ enum LogRec {
 
 
 const HISTORY_PATH: &str = "history.jsonl";
+pub fn compact_history_log() -> anyhow::Result<()> {
+    use std::collections::HashMap;
+
+    let path = std::path::Path::new(HISTORY_PATH);
+    if !path.exists() { return Ok(()); }
+
+    let file = OpenOptions::new().read(true).open(path)?;
+    let reader = BufReader::new(file);
+    let mut map: HashMap<String, Agg> = HashMap::new();
+
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() { continue; }
+        let rec: LogRec = serde_json::from_str(&line)?;
+        match rec {
+            LogRec::Put { key, ts, content } => {
+                map.entry(key).and_modify(|a| {
+                    if ts < a.created_ts { a.created_ts = ts; }
+                    if ts > a.last_ts    { a.last_ts    = ts; }
+                }).or_insert(Agg { content, created_ts: ts, last_ts: ts });
+            }
+            LogRec::Touch { key, ts } => {
+                if let Some(a) = map.get_mut(&key) {
+                    if ts > a.last_ts { a.last_ts = ts; }
+                }
+            }
+        }
+    }
+
+    // write compacted file
+    let tmp = path.with_extension("jsonl.tmp");
+    {
+        let mut out = std::fs::OpenOptions::new()
+            .create(true).write(true).truncate(true)
+            .open(&tmp)?;
+        // newest first
+        let mut items: Vec<_> = map.into_iter().collect();
+        items.sort_by(|a,b| b.1.last_ts.cmp(&a.1.last_ts));
+
+        for (key, agg) in items {
+            let put = LogRec::Put { key: key.clone(), ts: agg.created_ts, content: agg.content.clone() };
+            serde_json::to_writer(&mut out, &put)?; out.write_all(b"\n")?;
+            if agg.last_ts > agg.created_ts {
+                let touch = LogRec::Touch { key, ts: agg.last_ts };
+                serde_json::to_writer(&mut out, &touch)?; out.write_all(b"\n")?;
+            }
+        }
+        out.flush()?;
+    }
+    let _ = std::fs::remove_file(path);
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
 
 fn ensure_texture_for_b64(
     cache: &mut HashMap<String, egui::TextureHandle>,
@@ -328,16 +388,15 @@ impl eframe::App for ClipApp {
 
 
 fn main() -> anyhow::Result<()> {
-    // Build MRU from the append-only log:
+    if let Err(e) = compact_history_log() {
+        eprintln!("Compaction failed: {e}");
+    }
+
     let history = load_history_mru()?;
-
-    // Last hash (to avoid duplicate first tick): newest is at the END of `history`
     let last_hash = history.last().map(|e| clipboard_entry_hash(&e.content));
+    let seen: std::collections::HashSet<String> =
+        history.iter().map(|e| content_key(&e.content)).collect();
 
-    // Keep a set of keys we’ve seen (decide put vs touch)
-    let seen: HashSet<String> = history.iter().map(|e| content_key(&e.content)).collect();
-
-    // channel for watcher -> UI
     let (tx, rx) = crossbeam::channel::unbounded();
     spawn_watcher(tx, last_hash);
 
