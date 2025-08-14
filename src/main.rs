@@ -4,8 +4,6 @@ use blake3::Hash;
 use chrono::{DateTime, Utc};
 use png::{ColorType, Decoder, Encoder};
 use serde::{Deserialize, Serialize};
-use egui::{ColorImage};
-use image::{GenericImageView};
 use std::{
     fs::OpenOptions,
     io::{BufRead, BufReader, Write},
@@ -377,10 +375,6 @@ impl eframe::App for ClipApp {
                     };
 
                     ui.horizontal(|ui| {
-                        if ui.button("📋").on_hover_text("Restore to clipboard").clicked() {
-                            pending_restore = Some(entry.clone());
-                        }
-
                         if self.show_timestamps {
                             ui.label(
                                 egui::RichText::new(format!("[{}]", entry.ts.format("%H:%M:%S")))
@@ -391,25 +385,40 @@ impl eframe::App for ClipApp {
 
                         match (&entry.content, tex_opt) {
                             (ClipboardContent::Text(t), _) => {
-                                let mut s = t.clone();
-                                if let Some((cut, _)) = s.match_indices('\n').nth(4) {
-                                    s.truncate(cut);
-                                    s.push_str("\n…");
+                                // Build a clickable label that fills the row width
+                                let available_w = ui.available_width();
+                                let label = egui::Label::new(
+                                    egui::RichText::new({
+                                        // Shorten long texts visually
+                                        let mut s = t.clone();
+                                        if let Some((cut, _)) = s.match_indices('\n').nth(4) {
+                                            s.truncate(cut);
+                                            s.push_str("\n…");
+                                        }
+                                        s
+                                    })
+                                )
+                                .sense(egui::Sense::click());
+
+                                // Expand hit area to the available width so it feels “full-row”
+                                let resp = ui.add_sized([available_w, 0.0], label)
+                                            .on_hover_text("Click to copy")
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+                                if resp.clicked() {
+                                    pending_restore = Some(entry.clone());
                                 }
-                                ui.label(egui::RichText::new(s));
                             }
-                            (ClipboardContent::ImageBase64(b64), Some(tex)) => {
-                                // Keep aspect; max width 128
+
+                            (ClipboardContent::ImageBase64(_), Some(tex)) => {
+                                // unchanged image branch...
                                 let [w, h] = tex.size();
                                 let (w, h) = (w as f32, h as f32);
                                 let max_w = 128.0;
                                 let scale = (max_w / w).min(1.0);
-                                let w_scale = w * scale as f32;
-                                let h_scale = h * scale as f32;
-                                // ui.image(&tex.id(), egui::vec2(w_scale, h_scale));
-                                ui.image((tex.id(), egui::vec2(w_scale, h_scale)));
-                                ui.label(format!("({} bytes)", b64.len()));
+                                ui.image((tex.id(), egui::vec2(w * scale, h * scale)));
                             }
+
                             (ClipboardContent::ImageBase64(b64), None) => {
                                 ui.label(format!("<image {} bytes>", b64.len()));
                             }
