@@ -2,6 +2,7 @@ use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose, Engine as _};
 use blake3::Hash;
 use chrono::{DateTime, Utc};
+use egui::StrokeKind;
 use png::{ColorType, Decoder, Encoder};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -259,6 +260,42 @@ fn clipboard_entry_hash(c: &ClipboardContent) -> Hash {
     }
 }
 
+fn clickable_row(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let btn = egui::Button::new(egui::RichText::new(text)).frame(false);
+    let resp = ui
+        .add_sized([ui.available_width(), ui.spacing().interact_size.y], btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Click to copy");
+    let rounding = egui::CornerRadius::same(6);
+    let visuals = ui.visuals();
+    let hover_stroke = egui::Stroke::new(
+        1.2,
+        visuals.widgets.hovered.fg_stroke.color, // nice, theme-aware color
+    );
+    let idle_stroke = egui::Stroke::new(
+        0.5,
+        visuals.widgets.inactive.fg_stroke.color.gamma_multiply(0.25),
+    );
+    let focus_stroke = egui::Stroke::new(
+        2.0,
+        visuals.selection.stroke.color,
+    );
+
+    let stroke = if resp.has_focus() {
+        focus_stroke
+    } else if resp.hovered() {
+        hover_stroke
+    } else {
+        idle_stroke
+    };
+
+    let stroke_kind: StrokeKind = StrokeKind::Inside;
+    let rect = resp.rect.expand(2.0);
+    ui.painter().rect_stroke(rect, rounding, stroke, stroke_kind);
+
+    resp
+}
+
 fn spawn_watcher(
     tx: crossbeam::channel::Sender<ClipboardEntry>,
     mut last_hash: Option<Hash>,
@@ -333,7 +370,6 @@ impl eframe::App for ClipApp {
             });
         });
 
-        // Settings window
         if self.show_settings {
             egui::Window::new("Settings")
                 .open(&mut self.show_settings)
@@ -353,8 +389,11 @@ impl eframe::App for ClipApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let q = self.filter.to_lowercase();
+                ui.vertical_centered(|ui| {
+                    ui.set_max_width(300.0);
+                });
 
+                let q = self.filter.to_lowercase();
                 for idx in (0..self.history.len()).rev() {
                     let entry = self.history[idx].clone();
                     if !q.is_empty() {
@@ -375,6 +414,7 @@ impl eframe::App for ClipApp {
                     };
 
                     ui.horizontal(|ui| {
+                        ui.set_max_width(500.0);
                         if self.show_timestamps {
                             ui.label(
                                 egui::RichText::new(format!("[{}]", entry.ts.format("%H:%M:%S")))
@@ -385,25 +425,17 @@ impl eframe::App for ClipApp {
 
                         match (&entry.content, tex_opt) {
                             (ClipboardContent::Text(t), _) => {
-                                // Build a clickable label that fills the row width
-                                let available_w = ui.available_width();
-                                let label = egui::Label::new(
-                                    egui::RichText::new({
-                                        // Shorten long texts visually
-                                        let mut s = t.clone();
-                                        if let Some((cut, _)) = s.match_indices('\n').nth(4) {
-                                            s.truncate(cut);
-                                            s.push_str("\n…");
-                                        }
-                                        s
-                                    })
-                                )
-                                .sense(egui::Sense::click());
+                                let display_text = {
+                                    let mut s = t.clone();
+                                    if let Some((cut, _)) = s.match_indices('\n').nth(4) {
+                                        s.truncate(cut);
+                                        s.push_str("\n…");
+                                    }
+                                    s
+                                };
 
                                 // Expand hit area to the available width so it feels “full-row”
-                                let resp = ui.add_sized([available_w, 0.0], label)
-                                            .on_hover_text("Click to copy")
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                let resp = clickable_row(ui, &display_text);
 
                                 if resp.clicked() {
                                     pending_restore = Some(entry.clone());
@@ -414,7 +446,7 @@ impl eframe::App for ClipApp {
                                 // unchanged image branch...
                                 let [w, h] = tex.size();
                                 let (w, h) = (w as f32, h as f32);
-                                let max_w = 128.0;
+                                let max_w = 512.0;
                                 let scale = (max_w / w).min(1.0);
                                 ui.image((tex.id(), egui::vec2(w * scale, h * scale)));
                             }
@@ -460,12 +492,18 @@ fn main() -> anyhow::Result<()> {
     let history = load_history_mru()?;
     let last_hash = history.last().map(|e| clipboard_entry_hash(&e.content));
     let seen: std::collections::HashSet<String> =
-        history.iter().map(|e| content_key(&e.content)).collect();
-
+        history.iter().map(|e: &ClipboardEntry| content_key(&e.content)).collect();
     let (tx, rx) = crossbeam::channel::unbounded();
     spawn_watcher(tx, last_hash);
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([512 as f32, 600 as f32]),
+        vsync: true,
+        multisampling: 0,
+        depth_buffer: 0,
+        stencil_buffer: 0,
+        ..Default::default()
+    };
 
-    let options = eframe::NativeOptions::default();
     let res = eframe::run_native(
         "ClipVault",
         options,
