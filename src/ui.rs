@@ -1,3 +1,6 @@
+use crate::tray::TrayEvent;
+use crate::tray;
+
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
@@ -13,6 +16,7 @@ use crate::storage::{append_put, append_touch};
 use crate::types::{ClipboardContent, ClipboardEntry};
 
 pub struct ClipApp {
+    tray: std::sync::Arc<tray::Tray>,
     rx: crossbeam::channel::Receiver<ClipboardEntry>,
     history: Vec<ClipboardEntry>,
     seen: HashSet<String>,
@@ -25,11 +29,13 @@ pub struct ClipApp {
 
 impl ClipApp {
     pub fn new(
+        tray: std::sync::Arc<tray::Tray>,
         rx: crossbeam::channel::Receiver<ClipboardEntry>,
         history: Vec<ClipboardEntry>,
         seen: HashSet<String>,
     ) -> Self {
         Self {
+            tray,
             rx,
             history,
             seen,
@@ -38,6 +44,15 @@ impl ClipApp {
             show_settings: false,
             show_timestamps: false,
         }
+    }
+
+    fn show_main_window(ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
+    fn hide_to_tray(ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
     }
 }
 
@@ -122,9 +137,22 @@ fn clickable_row(ui: &mut egui::Ui, text: &str) -> egui::Response {
 impl eframe::App for ClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            exit(0);
+            Self::hide_to_tray(ctx);
+            return;
         }
         
+        match self.tray.try_recv() {
+            TrayEvent::OpenRequested => Self::show_main_window(ctx),
+            TrayEvent::QuitRequested => {
+                // request close
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            TrayEvent::None => {}
+        }
+
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+
         while let Ok(mut entry) = self.rx.try_recv() {
             let key = content_key(&entry.content);
             if self.seen.contains(&key) {
