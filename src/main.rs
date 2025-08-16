@@ -494,8 +494,8 @@ fn main() -> anyhow::Result<()> {
         eprintln!("Compaction failed: {e}");
     }
 
-    let history = load_history_mru()?;
-    let last_hash = history.last().map(|e| clipboard_entry_hash(&e.content));
+    let history: Vec<ClipboardEntry> = load_history_mru()?;
+    let last_hash: Option<Hash> = history.last().map(|e| clipboard_entry_hash(&e.content));
     let seen: std::collections::HashSet<String> =
         history.iter().map(|e: &ClipboardEntry| content_key(&e.content)).collect();
     let (tx, rx) = crossbeam::channel::unbounded();
@@ -503,7 +503,8 @@ fn main() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([512 as f32, 600 as f32])
-            .with_resizable(false),
+            .with_resizable(false)
+            .with_decorations(false),
         vsync: true,
         multisampling: 0,
         depth_buffer: 0,
