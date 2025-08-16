@@ -14,6 +14,7 @@ use crate::clip::{content_key, set_clipboard};
 use crate::img::base64_to_imagedata;
 use crate::storage::{append_put, append_touch};
 use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg};
+use crate::paths::history_path;
 
 pub struct ClipApp {
     tray: std::sync::Arc<tray::Tray>,
@@ -221,7 +222,7 @@ impl eframe::App for ClipApp {
                     ui.button("Clear history").clicked().then(|| {
                         self.history.clear();
                         self.seen.clear();
-                        let _ = std::fs::remove_file(crate::types::HISTORY_PATH);
+                        let _ = std::fs::remove_file(history_path());
                     });
                 });
         }

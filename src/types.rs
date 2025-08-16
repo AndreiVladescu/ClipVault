@@ -1,8 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-pub const HISTORY_PATH: &str = "history.jsonl";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClipboardContent {
     Text(String),

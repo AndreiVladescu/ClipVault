@@ -1,20 +1,20 @@
 use std::{
     fs::OpenOptions,
     io::{BufRead, BufReader, Write},
+    collections::HashMap
 };
 
 use chrono::{DateTime, Utc};
 use serde_json;
 
-use crate::types::{Agg, ClipboardContent, ClipboardEntry, LogRec, HISTORY_PATH};
+use crate::types::{Agg, ClipboardContent, ClipboardEntry, LogRec};
+use crate::paths::history_path;
 
 pub fn compact_history_log() -> anyhow::Result<()> {
-    use std::collections::HashMap;
-
-    let path: &std::path::Path = std::path::Path::new(HISTORY_PATH);
+    let path = history_path();
     if !path.exists() { return Ok(()); }
 
-    let file: std::fs::File = OpenOptions::new().read(true).open(path)?;
+    let file: std::fs::File = OpenOptions::new().read(true).open(&path)?;
     let reader: BufReader<std::fs::File> = BufReader::new(file);
     let mut map: HashMap<String, Agg> = HashMap::new();
 
@@ -37,7 +37,7 @@ pub fn compact_history_log() -> anyhow::Result<()> {
         }
     }
 
-    let tmp = path.with_extension("jsonl.tmp");
+    let tmp = path.with_extension("tmp");
     {
         let mut out = std::fs::OpenOptions::new()
             .create(true).write(true).truncate(true)
@@ -56,28 +56,30 @@ pub fn compact_history_log() -> anyhow::Result<()> {
         out.flush()?;
     }
     let _ = std::fs::remove_file(path);
+    let path = history_path();
     std::fs::rename(tmp, path)?;
     Ok(())
 }
 
 pub fn append_put(key: &str, content: &ClipboardContent, ts: DateTime<Utc>) -> anyhow::Result<()> {
-    let mut f = OpenOptions::new().create(true).append(true).open(HISTORY_PATH)?;
+    let path = history_path();
+    let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     serde_json::to_writer(&mut f, &LogRec::Put { key: key.to_string(), ts, content: content.clone() })?;
     f.write_all(b"\n")?;
     Ok(())
 }
 
 pub fn append_touch(key: &str, ts: DateTime<Utc>) -> anyhow::Result<()> {
-    let mut f = OpenOptions::new().create(true).append(true).open(HISTORY_PATH)?;
+    let path = history_path();
+    let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     serde_json::to_writer(&mut f, &LogRec::Touch { key: key.to_string(), ts })?;
     f.write_all(b"\n")?;
     Ok(())
 }
 
 pub fn load_history_mru() -> anyhow::Result<Vec<ClipboardEntry>> {
-    use std::collections::HashMap;
-
-    let file = match OpenOptions::new().read(true).open(HISTORY_PATH) {
+    let path = history_path();
+    let file = match OpenOptions::new().read(true).open(path) {
         Ok(f) => f, Err(_) => return Ok(Vec::new()),
     };
     let reader: BufReader<std::fs::File> = BufReader::new(file);

@@ -4,6 +4,7 @@ mod img;
 mod clip;
 mod ui;
 mod tray;
+mod paths;
 
 use crate::clip::{clipboard_entry_hash, spawn_watcher};
 use crate::storage::{compact_history_log, load_history_mru};
@@ -15,9 +16,10 @@ use global_hotkey::{
     HotKeyState, 
     hotkey::{HotKey, Modifiers, Code}
 };
-use std::time::{Duration, Instant};
-
-use std::collections::HashSet;
+use std::{
+    time::{Duration, Instant},
+    collections::HashSet,
+};
 
 
 fn main() -> anyhow::Result<()> {
