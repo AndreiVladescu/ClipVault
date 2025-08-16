@@ -82,13 +82,11 @@ pub fn compact_history_log() -> anyhow::Result<()> {
         }
     }
 
-    // write compacted file
     let tmp = path.with_extension("jsonl.tmp");
     {
         let mut out = std::fs::OpenOptions::new()
             .create(true).write(true).truncate(true)
             .open(&tmp)?;
-        // newest first
         let mut items: Vec<_> = map.into_iter().collect();
         items.sort_by(|a,b| b.1.last_ts.cmp(&a.1.last_ts));
 
@@ -107,7 +105,6 @@ pub fn compact_history_log() -> anyhow::Result<()> {
     Ok(())
 }
 
-// Image loader for buttons
 fn load_image_from_path(ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
     let path = Path::new(path);
     let img = image::open(path).ok()?;
@@ -233,13 +230,13 @@ fn load_history_mru() -> anyhow::Result<Vec<ClipboardEntry>> {
             LogRec::Put { key, ts, content } => {
                 let e = map.entry(key).or_insert((content, ts));
                 if ts > e.1 { e.1 = ts; }
-                else { e.0 = e.0.clone(); } // content already set
+                else { e.0 = e.0.clone(); }
                 e.0 = e.0.clone();
             }
             LogRec::Touch { key, ts } => {
                 if let Some(e) = map.get_mut(&key) {
                     e.1 = ts;
-                } // else: touched before put (rare) — ignore or store a placeholder
+                }
             }
         }
     }
@@ -248,7 +245,7 @@ fn load_history_mru() -> anyhow::Result<Vec<ClipboardEntry>> {
         .into_iter()
         .map(|(_k, (content, ts))| ClipboardEntry { ts, content })
         .collect();
-    v.sort_by(|a, b| b.ts.cmp(&a.ts)); // newest first
+    v.sort_by(|a, b| b.ts.cmp(&a.ts));
     Ok(v)
 }
 
@@ -270,7 +267,7 @@ fn clickable_row(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let visuals = ui.visuals();
     let hover_stroke = egui::Stroke::new(
         1.2,
-        visuals.widgets.hovered.fg_stroke.color, // nice, theme-aware color
+        visuals.widgets.hovered.fg_stroke.color,
     );
     let idle_stroke = egui::Stroke::new(
         0.5,
@@ -307,14 +304,12 @@ fn spawn_watcher(
                     let h: Hash = clipboard_entry_hash(&content);
                     if Some(h) != last_hash {
                         let entry: ClipboardEntry = ClipboardEntry { ts: Utc::now(), content: content.clone() };
-                        // send to UI
                         let _ = tx.send(entry);
                         last_hash = Some(h);
                     }
                 }
-                Ok(None) => {}        // nothing on clipboard / unsupported
+                Ok(None) => {}
                 Err(_e) => {          
-                    // clipboard temporarily unavailable? ignore and retry
                     eprintln!("clipboard read error: {_e:?}");
                 }
             }
@@ -329,16 +324,13 @@ impl eframe::App for ClipApp {
         
         while let Ok(mut entry) = self.rx.try_recv() {
             let key = content_key(&entry.content);
-
             if self.seen.contains(&key) {
-                // TOUCH: update ts, bump to front (end of vec shown in reverse)
                 entry.ts = Utc::now();
                 if let Some(pos) = self.history.iter().position(|e| content_key(&e.content) == key) {
                     let mut existing = self.history.remove(pos);
                     existing.ts = entry.ts;
                     self.history.push(existing);
                 } else {
-                    // If not present (e.g., after filtering / truncation), just push
                     self.history.push(entry.clone());
                 }
                 let _ = append_touch(&key, entry.ts);
@@ -434,21 +426,34 @@ impl eframe::App for ClipApp {
                                     s
                                 };
 
-                                // Expand hit area to the available width so it feels “full-row”
                                 let resp = clickable_row(ui, &display_text);
 
                                 if resp.clicked() {
                                     pending_restore = Some(entry.clone());
                                 }
                             }
-
                             (ClipboardContent::ImageBase64(_), Some(tex)) => {
-                                // unchanged image branch...
                                 let [w, h] = tex.size();
                                 let (w, h) = (w as f32, h as f32);
                                 let max_w = 512.0;
                                 let scale = (max_w / w).min(1.0);
-                                ui.image((tex.id(), egui::vec2(w * scale, h * scale)));
+                                let size = egui::vec2(w * scale, h * scale);
+                                let sized = egui::load::SizedTexture { id: tex.id(), size };
+                                let resp = ui
+                                    .add(egui::Image::new(sized).sense(egui::Sense::click()))
+                                    .on_hover_text("Click to copy")
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                let visuals = ui.visuals();
+                                let rounding = egui::CornerRadius::same(6);
+                                let stroke = if resp.hovered() {
+                                    egui::Stroke::new(1.5, visuals.widgets.hovered.fg_stroke.color)
+                                } else {
+                                    egui::Stroke::new(1.0, visuals.widgets.inactive.fg_stroke.color.gamma_multiply(0.25))
+                                };
+                                ui.painter().rect_stroke(resp.rect.expand(2.0), rounding, stroke, StrokeKind::Inside);
+                                if resp.clicked() {
+                                    pending_restore = Some(entry.clone());
+                                }
                             }
 
                             (ClipboardContent::ImageBase64(b64), None) => {
@@ -496,7 +501,9 @@ fn main() -> anyhow::Result<()> {
     let (tx, rx) = crossbeam::channel::unbounded();
     spawn_watcher(tx, last_hash);
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([512 as f32, 600 as f32]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([512 as f32, 600 as f32])
+            .with_resizable(false),
         vsync: true,
         multisampling: 0,
         depth_buffer: 0,
