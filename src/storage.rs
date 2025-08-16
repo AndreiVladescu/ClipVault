@@ -11,11 +11,11 @@ use crate::types::{Agg, ClipboardContent, ClipboardEntry, LogRec, HISTORY_PATH};
 pub fn compact_history_log() -> anyhow::Result<()> {
     use std::collections::HashMap;
 
-    let path = std::path::Path::new(HISTORY_PATH);
+    let path: &std::path::Path = std::path::Path::new(HISTORY_PATH);
     if !path.exists() { return Ok(()); }
 
-    let file = OpenOptions::new().read(true).open(path)?;
-    let reader = BufReader::new(file);
+    let file: std::fs::File = OpenOptions::new().read(true).open(path)?;
+    let reader: BufReader<std::fs::File> = BufReader::new(file);
     let mut map: HashMap<String, Agg> = HashMap::new();
 
     for line in reader.lines() {
@@ -46,10 +46,10 @@ pub fn compact_history_log() -> anyhow::Result<()> {
         items.sort_by(|a,b| b.1.last_ts.cmp(&a.1.last_ts));
 
         for (key, agg) in items {
-            let put = LogRec::Put { key: key.clone(), ts: agg.created_ts, content: agg.content.clone() };
+            let put: LogRec = LogRec::Put { key: key.clone(), ts: agg.created_ts, content: agg.content.clone() };
             serde_json::to_writer(&mut out, &put)?; out.write_all(b"\n")?;
             if agg.last_ts > agg.created_ts {
-                let touch = LogRec::Touch { key, ts: agg.last_ts };
+                let touch: LogRec = LogRec::Touch { key, ts: agg.last_ts };
                 serde_json::to_writer(&mut out, &touch)?; out.write_all(b"\n")?;
             }
         }
@@ -80,17 +80,17 @@ pub fn load_history_mru() -> anyhow::Result<Vec<ClipboardEntry>> {
     let file = match OpenOptions::new().read(true).open(HISTORY_PATH) {
         Ok(f) => f, Err(_) => return Ok(Vec::new()),
     };
-    let reader = BufReader::new(file);
+    let reader: BufReader<std::fs::File> = BufReader::new(file);
 
     let mut map: HashMap<String, (ClipboardContent, DateTime<Utc>)> = HashMap::new();
 
     for line in reader.lines() {
-        let line = line?;
+        let line: String = line?;
         if line.trim().is_empty() { continue; }
         let rec: LogRec = serde_json::from_str(&line)?;
         match rec {
             LogRec::Put { key, ts, content } => {
-                let e = map.entry(key).or_insert((content, ts));
+                let e: &mut (ClipboardContent, DateTime<Utc>) = map.entry(key).or_insert((content, ts));
                 if ts > e.1 { e.1 = ts; }
             }
             LogRec::Touch { key, ts } => {
@@ -105,6 +105,6 @@ pub fn load_history_mru() -> anyhow::Result<Vec<ClipboardEntry>> {
         .into_iter()
         .map(|(_k, (content, ts))| ClipboardEntry { ts, content })
         .collect();
-    v.sort_by(|a, b| b.ts.cmp(&a.ts));
+    v.sort_by(|a: &ClipboardEntry, b: &ClipboardEntry| b.ts.cmp(&a.ts));
     Ok(v)
 }

@@ -39,14 +39,14 @@ impl ClipApp {
 }
 
 fn load_image_from_path(ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
-    let path = Path::new(path);
-    let img = image::open(path).ok()?;
-    let img = img.to_rgba8();
+    let path: &Path = Path::new(path);
+    let img: image::DynamicImage = image::open(path).ok()?;
+    let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> = img.to_rgba8();
 
     let (width, height) = img.dimensions();
-    let pixels = img.as_raw();
+    let pixels: &Vec<u8> = img.as_raw();
 
-    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+    let color_image: egui::ColorImage = egui::ColorImage::from_rgba_unmultiplied(
         [width as usize, height as usize],
         &pixels,
     );
@@ -81,22 +81,22 @@ fn ensure_texture_for_b64(
 }
 
 fn clickable_row(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let btn = egui::Button::new(egui::RichText::new(text)).frame(false);
-    let resp = ui
+    let btn: egui::Button<'_> = egui::Button::new(egui::RichText::new(text)).frame(false);
+    let resp: egui::Response = ui
         .add_sized([ui.available_width(), ui.spacing().interact_size.y], btn)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text("Click to copy");
-    let rounding = egui::CornerRadius::same(6);
-    let visuals = ui.visuals();
-    let hover_stroke = egui::Stroke::new(
+    let rounding: egui::CornerRadius = egui::CornerRadius::same(6);
+    let visuals: &egui::Visuals = ui.visuals();
+    let hover_stroke: egui::Stroke = egui::Stroke::new(
         1.2,
         visuals.widgets.hovered.fg_stroke.color,
     );
-    let idle_stroke = egui::Stroke::new(
+    let idle_stroke: egui::Stroke = egui::Stroke::new(
         0.5,
         visuals.widgets.inactive.fg_stroke.color.gamma_multiply(0.25),
     );
-    let focus_stroke = egui::Stroke::new(
+    let focus_stroke: egui::Stroke = egui::Stroke::new(
         2.0,
         visuals.selection.stroke.color,
     );
@@ -110,7 +110,7 @@ fn clickable_row(ui: &mut egui::Ui, text: &str) -> egui::Response {
     };
 
     let stroke_kind: StrokeKind = StrokeKind::Inside;
-    let rect = resp.rect.expand(2.0);
+    let rect: egui::Rect = resp.rect.expand(2.0);
     ui.painter().rect_stroke(rect, rounding, stroke, stroke_kind);
 
     resp
@@ -131,7 +131,6 @@ impl eframe::App for ClipApp {
                 }
                 let _ = append_touch(&key, entry.ts);
             } else {
-                // PUT: first time we see this content
                 self.seen.insert(key.clone());
                 self.history.push(entry.clone());
                 let _ = append_put(&key, &entry.content, entry.ts);
@@ -181,9 +180,9 @@ impl eframe::App for ClipApp {
                     ui.set_max_width(300.0);
                 });
 
-                let q = self.filter.to_lowercase();
+                let q: String = self.filter.to_lowercase();
                 for idx in (0..self.history.len()).rev() {
-                    let entry = self.history[idx].clone();
+                    let entry: ClipboardEntry = self.history[idx].clone();
                     if !q.is_empty() {
                         if let ClipboardContent::Text(t) = &entry.content {
                             if !t.to_lowercase().contains(&q) {
