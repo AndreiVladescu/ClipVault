@@ -1,5 +1,8 @@
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    process::exit,
+};
 
 use chrono::Utc;
 use egui::StrokeKind;
@@ -118,6 +121,10 @@ fn clickable_row(ui: &mut egui::Ui, text: &str) -> egui::Response {
 
 impl eframe::App for ClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            exit(0);
+        }
+        
         while let Ok(mut entry) = self.rx.try_recv() {
             let key = content_key(&entry.content);
             if self.seen.contains(&key) {
