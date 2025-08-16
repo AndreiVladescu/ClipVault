@@ -3,17 +3,17 @@ use crate::tray;
 
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
-    process::exit,
+    path::Path
 };
 
 use chrono::Utc;
 use egui::StrokeKind;
+use crossbeam::channel::Receiver;
 
 use crate::clip::{content_key, set_clipboard};
 use crate::img::base64_to_imagedata;
 use crate::storage::{append_put, append_touch};
-use crate::types::{ClipboardContent, ClipboardEntry};
+use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg};
 
 pub struct ClipApp {
     tray: std::sync::Arc<tray::Tray>,
@@ -23,6 +23,8 @@ pub struct ClipApp {
     filter: String,
     tex_cache: HashMap<String, egui::TextureHandle>,
 
+    hotkey_rx: Receiver<HotkeyMsg>,
+    window_visible:bool,
     show_settings: bool,
     show_timestamps: bool,
 }
@@ -33,6 +35,7 @@ impl ClipApp {
         rx: crossbeam::channel::Receiver<ClipboardEntry>,
         history: Vec<ClipboardEntry>,
         seen: HashSet<String>,
+        hotkey_rx: Receiver<HotkeyMsg>,
     ) -> Self {
         Self {
             tray,
@@ -43,16 +46,24 @@ impl ClipApp {
             tex_cache: HashMap::new(),
             show_settings: false,
             show_timestamps: false,
+            hotkey_rx,
+            window_visible: false,
         }
     }
 
-    fn show_main_window(ctx: &egui::Context) {
+    fn show_main(&mut self, ctx: &egui::Context) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.window_visible = true;
     }
 
-    fn hide_to_tray(ctx: &egui::Context) {
+    fn hide_main(&mut self, ctx: &egui::Context) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        self.window_visible = false;
+    }
+
+    fn toggle_main(&mut self, ctx: &egui::Context) {
+        if self.window_visible { self.hide_main(ctx) } else { self.show_main(ctx) }
     }
 }
 
@@ -135,14 +146,22 @@ fn clickable_row(ui: &mut egui::Ui, text: &str) -> egui::Response {
 }
 
 impl eframe::App for ClipApp {
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            Self::hide_to_tray(ctx);
+            self.hide_main(ctx);
             return;
         }
-        
+
+        while let Ok(msg) = self.hotkey_rx.try_recv() {
+            match msg {
+                HotkeyMsg::ToggleWindow => self.toggle_main(ctx),
+            }
+        }
+
         match self.tray.try_recv() {
-            TrayEvent::OpenRequested => Self::show_main_window(ctx),
+            TrayEvent::OpenRequested => self.show_main(ctx),
             TrayEvent::QuitRequested => {
                 // request close
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);

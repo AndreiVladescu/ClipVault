@@ -28,3 +28,6 @@ pub enum LogRec {
     Put { key: String, ts: DateTime<Utc>, content: ClipboardContent },
     Touch { key: String, ts: DateTime<Utc> },
 }
+
+#[derive(Debug, Clone)]
+pub enum HotkeyMsg { ToggleWindow }

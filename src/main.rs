@@ -7,11 +7,44 @@ mod tray;
 
 use crate::clip::{clipboard_entry_hash, spawn_watcher};
 use crate::storage::{compact_history_log, load_history_mru};
-use crate::types::ClipboardEntry;
+use crate::types::{ClipboardEntry, HotkeyMsg};
+use crossbeam::channel;
+use global_hotkey::{
+    GlobalHotKeyEvent, 
+    GlobalHotKeyManager,
+    HotKeyState, 
+    hotkey::{HotKey, Modifiers, Code}
+};
+use std::time::{Duration, Instant};
 
 use std::collections::HashSet;
 
+
 fn main() -> anyhow::Result<()> {
+
+        let (hk_tx, hk_rx) = channel::unbounded::<HotkeyMsg>();
+
+
+        std::thread::spawn(move || {
+            let mgr = GlobalHotKeyManager::new().expect("hotkey manager");
+            let hk = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyV);
+            mgr.register(hk).expect("register hotkey");
+
+            let rx = GlobalHotKeyEvent::receiver();
+
+            // simple debounce to avoid repeats
+            let mut last = Instant::now() - Duration::from_millis(500);
+
+            loop {
+                if let Ok(ev) = rx.recv() {
+                    if ev.state == HotKeyState::Pressed && last.elapsed() > Duration::from_millis(250) {
+                        let _ = hk_tx.send(HotkeyMsg::ToggleWindow);
+                        last = Instant::now();
+                    }
+                }
+            }
+        });
+    
     if let Err(e) = compact_history_log() {
         eprintln!("Compaction failed: {e}");
     }
@@ -49,6 +82,7 @@ fn main() -> anyhow::Result<()> {
                     rx,
                     history,
                     seen,
+                    hk_rx
                 )))
             }),
         );
