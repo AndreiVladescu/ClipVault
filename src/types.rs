@@ -13,13 +13,6 @@ pub struct ClipboardEntry {
     pub content: ClipboardContent,
 }
 
-#[derive(Clone)]
-pub struct Agg {
-    pub content: ClipboardContent,
-    pub created_ts: DateTime<Utc>,
-    pub last_ts: DateTime<Utc>,
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum LogRec {
@@ -41,7 +34,18 @@ pub enum HotkeyMsg {
 
 #[derive(Debug)]
 pub enum UnlockResult {
-    Unlocked,
+    Unlocked { key: [u8; 32], nonce: [u8; 24] },
     Cancelled,
-    Failed,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct FileModel {
+    pub version: u8,
+    pub entries: Vec<ClipboardEntry>,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug, Clone, Copy)]
+pub struct Meta {
+    pub version: u8,
+    pub next_counter: u64,
 }

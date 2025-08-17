@@ -8,19 +8,19 @@ mod types;
 mod ui;
 
 use crate::clip::{clipboard_entry_hash, spawn_watcher};
-use crate::storage::{compact_history_log, load_history_mru};
-use crate::types::{ClipboardEntry, HotkeyMsg, UnlockResult};
+use crate::types::{HotkeyMsg, UnlockResult};
+use crate::storage::Store;
+
 use crossbeam::channel;
 use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
     hotkey::{Code, HotKey, Modifiers},
 };
 use std::{
-    collections::HashSet,
     time::{Duration, Instant},
 };
 
-fn unencrypted_main() -> anyhow::Result<()> {
+fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
     let (hk_tx, hk_rx) = channel::unbounded::<HotkeyMsg>();
     std::thread::spawn(move || {
         let mgr = GlobalHotKeyManager::new().expect("hotkey manager");
@@ -42,16 +42,9 @@ fn unencrypted_main() -> anyhow::Result<()> {
         }
     });
 
-    if let Err(e) = compact_history_log() {
-        eprintln!("Compaction failed: {e}");
-    }
-
-    let history: Vec<ClipboardEntry> = load_history_mru()?;
-    let last_hash = history.last().map(|e| clipboard_entry_hash(&e.content));
-    let seen: HashSet<String> = history
-        .iter()
-        .map(|e| clip::content_key(&e.content))
-        .collect();
+    // Open/create in-memory store (loads & decrypts from disk)
+    let store = Store::open_or_create(key, nonce)?;
+    let last_hash = store.entries().last().map(|e| clipboard_entry_hash(&e.content));
 
     let (tx, rx) = crossbeam::channel::unbounded();
     spawn_watcher(tx, last_hash);
@@ -77,7 +70,7 @@ fn unencrypted_main() -> anyhow::Result<()> {
         options,
         Box::new(move |_cc| {
             Ok::<Box<dyn eframe::App>, _>(Box::new(ui::ClipApp::new(
-                tray_clone, rx, history, seen, hk_rx,
+                tray_clone, rx, store, hk_rx,
             )))
         }),
     );
@@ -88,7 +81,8 @@ fn unencrypted_main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn encrypted_main() -> anyhow::Result<()> {
+
+fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
     let (tx, rx) = channel::bounded::<UnlockResult>(1);
 
     let options = eframe::NativeOptions {
@@ -118,22 +112,30 @@ fn encrypted_main() -> anyhow::Result<()> {
     let outcome = rx
         .recv_timeout(Duration::from_millis(50))
         .unwrap_or(UnlockResult::Cancelled);
+
     match outcome {
-        UnlockResult::Unlocked => {
-            return Ok(());
+        UnlockResult::Unlocked { key, nonce } => {
+            return Ok((key, nonce));
         }
         UnlockResult::Cancelled => {
-            return Err(anyhow::anyhow!("Failed to unlock ClipVault: {outcome:?}"));
-        }
-        UnlockResult::Failed => {
             return Err(anyhow::anyhow!("Failed to unlock ClipVault: {outcome:?}"));
         }
     }
 }
 
 fn main() -> anyhow::Result<()> {
-    if encrypted_main().is_err() {
-        return anyhow::Result::Err(anyhow::anyhow!("Failed to decrypt history."));
+    let crypto_params = encrypted_main();
+    match crypto_params {
+        Ok((key, nonce)) => {
+            if let Err(e) = unencrypted_main(key, nonce) {
+                eprintln!("Error in unencrypted main: {e}");
+                return Err(e);
+            }
+        }
+        Err(e) => {
+            return anyhow::Result::Err(anyhow::anyhow!("Failed to decrypt history: {e}"));
+        }
     }
-    return unencrypted_main();
+
+    return Ok(());
 }

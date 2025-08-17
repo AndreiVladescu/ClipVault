@@ -1,27 +1,28 @@
 use crate::tray;
 use crate::tray::TrayEvent;
+use crate::clip::{content_key, set_clipboard};
+use crate::crypto::{decrypt_file, derivate_crypto_params, derive_save_nonce};
+use crate::img::base64_to_imagedata;
+use crate::paths::history_path;
+use crate::storage::Store;
+use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg, UnlockResult, Meta};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::Path,
 };
 
 use chrono::Utc;
 use crossbeam::channel::Receiver;
 use egui::{RichText, StrokeKind};
-
-use crate::clip::{content_key, set_clipboard};
-use crate::img::base64_to_imagedata;
-use crate::paths::history_path;
-use crate::storage::{append_put, append_touch};
-use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg, UnlockResult};
-use crate::crypto::{derivate_crypto_params, decrypt_file};
+use anyhow::anyhow;
 
 pub struct ClipAppLocked {
     passphrase: String,
     key: [u8; 32],
     nonce: [u8; 24],
     loaded_crypto_params: bool,
+    create_mode: bool,
 
     outcome_tx: Option<crossbeam::channel::Sender<UnlockResult>>,
     outcome_sent: bool,
@@ -34,6 +35,7 @@ impl ClipAppLocked {
             key: [0; 32],
             nonce: [0; 24],
             loaded_crypto_params: false,
+            create_mode: !history_path().exists(),
             outcome_tx: Some(outcome_tx),
             outcome_sent: false,
         }
@@ -46,51 +48,103 @@ impl ClipAppLocked {
         self.loaded_crypto_params = true;
     }
 
-    pub fn try_decrypt_history(&self) -> anyhow::Result<()> {
-        return decrypt_file(
-            history_path().to_str().unwrap(),
-            history_path().with_extension("decrypted.json").to_str().unwrap(),
-            &self.key,
-            &self.nonce,
-        );
+pub fn try_decrypt_history(&self) -> anyhow::Result<()> {
+    let path = history_path();
+    let meta_path = path.with_extension("meta.json");
+
+    // helper to attempt a decrypt with a given nonce
+    let try_nonce = |nonce: [u8; 24]| -> anyhow::Result<()> {
+        decrypt_file(path.to_str().unwrap(), &self.key, &nonce).0
+    };
+
+    if meta_path.exists() {
+        // read sidecar meta to learn the save counter
+        let bytes = std::fs::read(&meta_path)?;
+        let meta: Meta = serde_json::from_slice(&bytes)?;
+        if meta.next_counter > 0 {
+            // most recent successful save used counter = next_counter - 1
+            let c_prev = meta.next_counter.saturating_sub(1);
+            let n_prev = derive_save_nonce(&self.key, &self.nonce, c_prev);
+            if try_nonce(n_prev).is_ok() {
+                return Ok(());
+            }
+            // if meta advanced before data finished writing, try current next_counter
+            let n_curr = derive_save_nonce(&self.key, &self.nonce, meta.next_counter);
+            if try_nonce(n_curr).is_ok() {
+                return Ok(());
+            }
+        }
+        // fallback for very old files that used the base nonce directly
+        try_nonce(self.nonce).map_err(|_| anyhow!("decryption failed with derived and base nonces"))
+    } else {
+        // no meta → legacy file; try base nonce, then first derived counter = 1
+        if try_nonce(self.nonce).is_ok() {
+            return Ok(());
+        }
+        let n1 = derive_save_nonce(&self.key, &self.nonce, 1);
+        try_nonce(n1).map_err(|_| anyhow!("decryption failed (no meta present)"))
     }
 }
+}
+
 
 impl eframe::App for ClipAppLocked {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            
+            let msg_locked = "ClipVault is locked.\n\nTo unlock you need to enter the passphrase.";
+            let msg_create =
+                "ClipVault is not initialized.\n\nSet passphrase first.";
             ui.label(
-                egui::RichText::new(
-                    "ClipVault is locked.\n\nTo unlock you need to enter the passphrase.",
-                )
+                egui::RichText::new(if self.create_mode {
+                    msg_create
+                } else {
+                    msg_locked
+                })
                 .size(14.0),
             );
+
             ui.separator();
             ui.text_edit_singleline(&mut self.passphrase);
+
+            let btn_text = if self.create_mode { "Create" } else { "Unlock" };
             let passphrase_button =
-                egui::Button::new(RichText::new("Unlock").size(16.0)).corner_radius(6.0);
+                egui::Button::new(RichText::new(btn_text).size(16.0)).corner_radius(6.0);
+
             ui.add(passphrase_button).clicked().then(|| {
                 if self.passphrase.is_empty() {
                     // TODO Show error message
                     println!("Passphrase cannot be empty.");
                 } else {
                     self.set_crypto_params();
-                    if (self.try_decrypt_history()).is_ok() {
+                    if self.create_mode {
+                        // Accept passphrase and proceed
                         if let Some(tx) = self.outcome_tx.take() {
-                            let _ = tx.send(UnlockResult::Unlocked);
+                            let _ = tx.send(UnlockResult::Unlocked {
+                                key: self.key,
+                                nonce: self.nonce,
+                            });
                             self.outcome_sent = true;
                         }
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     } else {
-                        // TODO Show error message
-                        println!("Failed to decrypt history with the provided passphrase.");
+                        // Existing file: verify passphrase by decrypting
+                        if self.try_decrypt_history().is_ok() {
+                            if let Some(tx) = self.outcome_tx.take() {
+                                let _ = tx.send(UnlockResult::Unlocked {
+                                    key: self.key,
+                                    nonce: self.nonce,
+                                });
+                                self.outcome_sent = true;
+                            }
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        } else {
+                            // TODO Show error message
+                            println!("Failed to decrypt history with the provided passphrase.");
+                        }
                     }
                 }
             });
         });
-
-
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -109,8 +163,7 @@ impl eframe::App for ClipAppLocked {
 pub struct ClipApp {
     tray: std::sync::Arc<tray::Tray>,
     rx: crossbeam::channel::Receiver<ClipboardEntry>,
-    history: Vec<ClipboardEntry>,
-    seen: HashSet<String>,
+    store: Store,
     filter: String,
     tex_cache: HashMap<String, egui::TextureHandle>,
 
@@ -124,15 +177,13 @@ impl ClipApp {
     pub fn new(
         tray: std::sync::Arc<tray::Tray>,
         rx: crossbeam::channel::Receiver<ClipboardEntry>,
-        history: Vec<ClipboardEntry>,
-        seen: HashSet<String>,
+        store: Store,
         hotkey_rx: Receiver<HotkeyMsg>,
     ) -> Self {
         Self {
             tray,
             rx,
-            history,
-            seen,
+            store,
             filter: String::new(),
             tex_cache: HashMap::new(),
             show_settings: false,
@@ -257,6 +308,7 @@ impl eframe::App for ClipApp {
             TrayEvent::QuitRequested => {
                 // request close
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                self.store.force_save().ok();
                 return;
             }
             TrayEvent::None => {}
@@ -264,27 +316,8 @@ impl eframe::App for ClipApp {
 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
 
-        while let Ok(mut entry) = self.rx.try_recv() {
-            let key = content_key(&entry.content);
-            if self.seen.contains(&key) {
-                entry.ts = Utc::now();
-                if let Some(pos) = self
-                    .history
-                    .iter()
-                    .position(|e| content_key(&e.content) == key)
-                {
-                    let mut existing = self.history.remove(pos);
-                    existing.ts = entry.ts;
-                    self.history.push(existing);
-                } else {
-                    self.history.push(entry.clone());
-                }
-                let _ = append_touch(&key, entry.ts);
-            } else {
-                self.seen.insert(key.clone());
-                self.history.push(entry.clone());
-                let _ = append_put(&key, &entry.content, entry.ts);
-            }
+        while let Ok(entry) = self.rx.try_recv() {
+            self.store.put(entry.ts, entry.content.clone());
         }
 
         // Top panel
@@ -314,11 +347,15 @@ impl eframe::App for ClipApp {
                 .resizable(false)
                 .show(ctx, |ui| {
                     ui.checkbox(&mut self.show_timestamps, "Show timestamps");
-                    ui.button("Clear history").clicked().then(|| {
-                        self.history.clear();
-                        self.seen.clear();
-                        let _ = std::fs::remove_file(history_path());
-                    });
+                    if ui.button("Save now").clicked() {
+                        if let Err(e) = self.store.force_save() {
+                            eprintln!("Save failed: {e}");
+                        }
+                    }
+                    if ui.button("Clear history").clicked() {
+                        self.store.clear();
+                        let _ = self.store.force_save();
+                    }
                 });
         }
 
@@ -330,9 +367,11 @@ impl eframe::App for ClipApp {
                     ui.set_max_width(300.0);
                 });
 
+                let items = self.store.entries();
                 let q: String = self.filter.to_lowercase();
-                for idx in (0..self.history.len()).rev() {
-                    let entry: ClipboardEntry = self.history[idx].clone();
+                for idx in (0..items.len()).rev() {
+                    let entry: ClipboardEntry = items[idx].clone();
+
                     if !q.is_empty() {
                         if let ClipboardContent::Text(t) = &entry.content {
                             if !t.to_lowercase().contains(&q) {
@@ -425,34 +464,11 @@ impl eframe::App for ClipApp {
 
         if let Some(entry) = pending_restore {
             let _ = set_clipboard(&entry.content);
-            let key = content_key(&entry.content);
             let now = Utc::now();
-
-            if self.seen.contains(&key) {
-                if let Some(pos) = self
-                    .history
-                    .iter()
-                    .position(|e| content_key(&e.content) == key)
-                {
-                    let mut existing = self.history.remove(pos);
-                    existing.ts = now;
-                    self.history.push(existing);
-                } else {
-                    self.history.push(ClipboardEntry {
-                        ts: now,
-                        content: entry.content.clone(),
-                    });
-                }
-                let _ = append_touch(&key, now);
-            } else {
-                self.seen.insert(key.clone());
-                let new_entry = ClipboardEntry {
-                    ts: now,
-                    content: entry.content.clone(),
-                };
-                self.history.push(new_entry.clone());
-                let _ = append_put(&key, &new_entry.content, now);
-            }
+            self.store.put(now, entry.content.clone());
         }
+    }
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        let _ = self.store.force_save();
     }
 }
