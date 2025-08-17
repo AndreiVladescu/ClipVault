@@ -1,4 +1,6 @@
 
+use crate::assets::ICON_TRAY;
+
 use tray_icon::{
     Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent as TrayMenuEvent, MenuId, MenuItem},
@@ -24,9 +26,7 @@ impl Tray {
             let (tx_ids, rx_ids) = mpsc::sync_channel::<(MenuId, MenuId)>(1);
 
             std::thread::spawn(move || {
-                #[cfg(target_os = "linux")]{
-                    gtk::init().expect("gtk::init failed");
-                }
+                gtk::init().expect("gtk::init failed");
 
                 let menu = Menu::new();
                 let open = MenuItem::new("Open", true, None);
@@ -34,7 +34,9 @@ impl Tray {
                 menu.append(&open).unwrap();
                 menu.append(&quit).unwrap();
 
-                let icon = load_icon_png(include_bytes!("../img/tray.png")).unwrap();
+                let icon = crate::assets::get_bytes(ICON_TRAY)
+                    .ok_or_else(|| anyhow::anyhow!("missing embedded app icon")).unwrap();
+                let icon = crate::assets::tray_icon_from_png(&icon).unwrap();
 
                 let _tray_icon = TrayIconBuilder::new()
                     .with_tooltip("ClipVault")
@@ -48,10 +50,7 @@ impl Tray {
                     .send((open.id().to_owned(), quit.id().to_owned()))
                     .ok();
 
-                #[cfg(target_os = "linux")]{
-                    gtk::main();
-                }
-                
+                gtk::main();
             });
 
             let (open_id, quit_id) = rx_ids.recv()?;
@@ -66,8 +65,9 @@ impl Tray {
             menu.append(&open)?;
             menu.append(&quit)?;
 
-            let icon = load_icon_png(include_bytes!("../img/tray.png"))
-                .unwrap();
+            let icon = crate::assets::get_bytes(ICON_TRAY)
+                .ok_or_else(|| anyhow::anyhow!("missing embedded app icon")).unwrap();
+            let icon = crate::assets::tray_icon_from_png(&icon).unwrap();
 
             let tray_icon = TrayIconBuilder::new()
                 .with_tooltip("ClipVault")
@@ -106,10 +106,4 @@ impl Tray {
 
         TrayEvent::None
     }
-}
-
-fn load_icon_png(bytes: &[u8]) -> anyhow::Result<Icon> {
-    let img = image::load_from_memory(bytes)?.into_rgba8();
-    let (w, h) = img.dimensions();
-    Ok(Icon::from_rgba(img.into_raw(), w, h)?)
 }

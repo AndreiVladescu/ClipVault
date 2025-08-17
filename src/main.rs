@@ -6,7 +6,9 @@ mod storage;
 mod tray;
 mod types;
 mod ui;
+mod assets;
 
+use crate::assets::{get_bytes, icon_data_from_png, ICON_TRAY};
 use crate::clip::{clipboard_entry_hash, spawn_watcher};
 use crate::types::{HotkeyMsg, UnlockResult};
 use crate::storage::Store;
@@ -43,19 +45,22 @@ fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
         }
     });
 
-    // Open/create in-memory store (loads & decrypts from disk)
     let store = Store::open_or_create(key, nonce)?;
     let last_hash = store.entries().last().map(|e| clipboard_entry_hash(&e.content));
 
     let (tx, rx) = crossbeam::channel::unbounded();
     spawn_watcher(tx, last_hash);
 
+    let icon = get_bytes(ICON_TRAY)
+        .and_then(|b| icon_data_from_png(&b)).unwrap();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([512.0, 600.0])
             .with_resizable(false)
             .with_decorations(false)
-            .with_visible(false),
+            .with_visible(false)
+            .with_icon(icon),
         vsync: true,
         multisampling: 0,
         depth_buffer: 0,
@@ -86,11 +91,16 @@ fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
 fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
     let (tx, rx) = channel::bounded::<UnlockResult>(1);
 
+    let icon = get_bytes(ICON_TRAY)
+        .and_then(|b| icon_data_from_png(&b)).unwrap();
+
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([300.0, 114.0])
             .with_resizable(false)
-            .with_visible(true),
+            .with_visible(true)
+            .with_icon(icon),
         vsync: true,
         multisampling: 0,
         depth_buffer: 0,

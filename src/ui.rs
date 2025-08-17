@@ -6,16 +6,15 @@ use crate::img::base64_to_imagedata;
 use crate::paths::history_path;
 use crate::storage::Store;
 use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg, UnlockResult, Meta};
-
-use std::{
-    collections::HashMap,
-    path::Path,
-};
+use crate::assets::{load_texture_from_asset, ICON_SETTINGS};
 
 use chrono::Utc;
 use crossbeam::channel::Receiver;
 use egui::{RichText, StrokeKind};
 use anyhow::anyhow;
+use std::{
+    collections::HashMap,
+};
 
 pub struct ClipAppLocked {
     passphrase: String,
@@ -213,24 +212,6 @@ impl ClipApp {
     }
 }
 
-fn load_image_from_path(ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
-    let path: &Path = Path::new(path);
-    let img: image::DynamicImage = image::open(path).ok()?;
-    let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> = img.to_rgba8();
-
-    let (width, height) = img.dimensions();
-    let pixels: &Vec<u8> = img.as_raw();
-
-    let color_image: egui::ColorImage =
-        egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &pixels);
-
-    Some(ctx.load_texture(
-        path.to_string_lossy(),
-        color_image,
-        egui::TextureOptions::LINEAR,
-    ))
-}
-
 fn ensure_texture_for_b64(
     cache: &mut HashMap<String, egui::TextureHandle>,
     ctx: &egui::Context,
@@ -327,7 +308,7 @@ impl eframe::App for ClipApp {
                 ui.separator();
                 ui.label(egui::RichText::new("Filter").size(18.0));
                 ui.text_edit_singleline(&mut self.filter);
-                if let Some(tex) = load_image_from_path(ctx, "img/settings.png") {
+                if let Some(tex) = load_texture_from_asset(ctx, ICON_SETTINGS) {
                     let size = egui::vec2(24.0, 24.0);
                     let sized_tex = egui::load::SizedTexture { id: tex.id(), size };
                     let settings_icon = egui::ImageButton::new(sized_tex).corner_radius(4.0);
