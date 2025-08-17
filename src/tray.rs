@@ -1,3 +1,4 @@
+
 use tray_icon::{
     Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent as TrayMenuEvent, MenuId, MenuItem},
@@ -23,7 +24,9 @@ impl Tray {
             let (tx_ids, rx_ids) = mpsc::sync_channel::<(MenuId, MenuId)>(1);
 
             std::thread::spawn(move || {
-                gtk::init().expect("gtk::init failed");
+                #[cfg(target_os = "linux")]{
+                    gtk::init().expect("gtk::init failed");
+                }
 
                 let menu = Menu::new();
                 let open = MenuItem::new("Open", true, None);
@@ -45,8 +48,10 @@ impl Tray {
                     .send((open.id().to_owned(), quit.id().to_owned()))
                     .ok();
 
-                // Run GTK main loop on this thread
-                gtk::main();
+                #[cfg(target_os = "linux")]{
+                    gtk::main();
+                }
+                
             });
 
             let (open_id, quit_id) = rx_ids.recv()?;

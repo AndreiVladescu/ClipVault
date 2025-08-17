@@ -17,7 +17,6 @@ eframe = "0.32.0"
 egui = "0.32.0"
 crossbeam = "0.8.4"
 tray-icon = "0.21.1"
-gtk = "0.18.2"
 global-hotkey = "0.7.0"
 home = "0.5.11"
 aead = "0.5.2"
@@ -27,3 +26,6 @@ once_cell = "1.21.3"
 getrandom = "0.3.3"
 chacha20poly1305 = { version = "0.9.0", features = ["stream"] }
 rand_core = "0.9.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18.2" }

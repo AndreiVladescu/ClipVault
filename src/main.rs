@@ -16,6 +16,7 @@ use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
     hotkey::{Code, HotKey, Modifiers},
 };
+
 use std::{
     time::{Duration, Instant},
 };
