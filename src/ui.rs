@@ -1,20 +1,57 @@
-use crate::tray::TrayEvent;
 use crate::tray;
+use crate::tray::TrayEvent;
 
 use std::{
     collections::{HashMap, HashSet},
-    path::Path
+    path::Path,
 };
 
 use chrono::Utc;
-use egui::StrokeKind;
 use crossbeam::channel::Receiver;
+use egui::{RichText, StrokeKind};
 
 use crate::clip::{content_key, set_clipboard};
 use crate::img::base64_to_imagedata;
+use crate::paths::history_path;
 use crate::storage::{append_put, append_touch};
 use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg};
-use crate::paths::history_path;
+
+pub struct ClipAppLocked {
+    passphrase: String,
+}
+
+impl ClipAppLocked {
+    pub fn new() -> Self {
+        Self {
+            passphrase: String::new(),
+        }
+    }
+}
+
+impl eframe::App for ClipAppLocked {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.label(
+                egui::RichText::new(
+                    "ClipVault is locked.\n\nTo unlock you need to enter the passphrase.",
+                )
+                .size(14.0),
+            );
+            //ui.label("Enter passphrase to unlock:");
+            ui.separator();
+            ui.text_edit_singleline(&mut self.passphrase);
+            let passphrase_button =
+                egui::Button::new(RichText::new("Unlock").size(16.0)).corner_radius(6.0);
+            ui.add(passphrase_button).clicked().then(|| {
+                if self.passphrase == "your_secret_passphrase" {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    ui.label(RichText::new("Incorrect passphrase").color(egui::Color32::RED));
+                }
+            });
+        });
+    }
+}
 
 pub struct ClipApp {
     tray: std::sync::Arc<tray::Tray>,
@@ -25,7 +62,7 @@ pub struct ClipApp {
     tex_cache: HashMap<String, egui::TextureHandle>,
 
     hotkey_rx: Receiver<HotkeyMsg>,
-    window_visible:bool,
+    window_visible: bool,
     show_settings: bool,
     show_timestamps: bool,
 }
@@ -64,7 +101,11 @@ impl ClipApp {
     }
 
     fn toggle_main(&mut self, ctx: &egui::Context) {
-        if self.window_visible { self.hide_main(ctx) } else { self.show_main(ctx) }
+        if self.window_visible {
+            self.hide_main(ctx)
+        } else {
+            self.show_main(ctx)
+        }
     }
 }
 
@@ -76,10 +117,8 @@ fn load_image_from_path(ctx: &egui::Context, path: &str) -> Option<egui::Texture
     let (width, height) = img.dimensions();
     let pixels: &Vec<u8> = img.as_raw();
 
-    let color_image: egui::ColorImage = egui::ColorImage::from_rgba_unmultiplied(
-        [width as usize, height as usize],
-        &pixels,
-    );
+    let color_image: egui::ColorImage =
+        egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &pixels);
 
     Some(ctx.load_texture(
         path.to_string_lossy(),
@@ -94,13 +133,13 @@ fn ensure_texture_for_b64(
     key: &str,
     b64: &str,
 ) {
-    if cache.contains_key(key) { return; }
+    if cache.contains_key(key) {
+        return;
+    }
 
     if let Ok(img) = base64_to_imagedata(b64) {
-        let color: egui::ColorImage = egui::ColorImage::from_rgba_unmultiplied(
-            [img.width, img.height],
-            &img.bytes,
-        );
+        let color: egui::ColorImage =
+            egui::ColorImage::from_rgba_unmultiplied([img.width, img.height], &img.bytes);
         let tex: egui::TextureHandle = ctx.load_texture(
             format!("thumb-{key}"),
             color,
@@ -118,18 +157,18 @@ fn clickable_row(ui: &mut egui::Ui, text: &str) -> egui::Response {
         .on_hover_text("Click to copy");
     let rounding: egui::CornerRadius = egui::CornerRadius::same(6);
     let visuals: &egui::Visuals = ui.visuals();
-    let hover_stroke: egui::Stroke = egui::Stroke::new(
-        1.2,
-        visuals.widgets.hovered.fg_stroke.color,
-    );
+    let hover_stroke: egui::Stroke =
+        egui::Stroke::new(1.2, visuals.widgets.hovered.fg_stroke.color);
     let idle_stroke: egui::Stroke = egui::Stroke::new(
         0.5,
-        visuals.widgets.inactive.fg_stroke.color.gamma_multiply(0.25),
+        visuals
+            .widgets
+            .inactive
+            .fg_stroke
+            .color
+            .gamma_multiply(0.25),
     );
-    let focus_stroke: egui::Stroke = egui::Stroke::new(
-        2.0,
-        visuals.selection.stroke.color,
-    );
+    let focus_stroke: egui::Stroke = egui::Stroke::new(2.0, visuals.selection.stroke.color);
 
     let stroke = if resp.has_focus() {
         focus_stroke
@@ -141,15 +180,14 @@ fn clickable_row(ui: &mut egui::Ui, text: &str) -> egui::Response {
 
     let stroke_kind: StrokeKind = StrokeKind::Inside;
     let rect: egui::Rect = resp.rect.expand(2.0);
-    ui.painter().rect_stroke(rect, rounding, stroke, stroke_kind);
+    ui.painter()
+        .rect_stroke(rect, rounding, stroke, stroke_kind);
 
     resp
 }
 
 impl eframe::App for ClipApp {
-
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.hide_main(ctx);
             return;
@@ -177,7 +215,11 @@ impl eframe::App for ClipApp {
             let key = content_key(&entry.content);
             if self.seen.contains(&key) {
                 entry.ts = Utc::now();
-                if let Some(pos) = self.history.iter().position(|e| content_key(&e.content) == key) {
+                if let Some(pos) = self
+                    .history
+                    .iter()
+                    .position(|e| content_key(&e.content) == key)
+                {
                     let mut existing = self.history.remove(pos);
                     existing.ts = entry.ts;
                     self.history.push(existing);
@@ -298,9 +340,22 @@ impl eframe::App for ClipApp {
                                 let stroke = if resp.hovered() {
                                     egui::Stroke::new(1.5, visuals.widgets.hovered.fg_stroke.color)
                                 } else {
-                                    egui::Stroke::new(1.0, visuals.widgets.inactive.fg_stroke.color.gamma_multiply(0.25))
+                                    egui::Stroke::new(
+                                        1.0,
+                                        visuals
+                                            .widgets
+                                            .inactive
+                                            .fg_stroke
+                                            .color
+                                            .gamma_multiply(0.25),
+                                    )
                                 };
-                                ui.painter().rect_stroke(resp.rect.expand(2.0), rounding, stroke, StrokeKind::Inside);
+                                ui.painter().rect_stroke(
+                                    resp.rect.expand(2.0),
+                                    rounding,
+                                    stroke,
+                                    StrokeKind::Inside,
+                                );
                                 if resp.clicked() {
                                     pending_restore = Some(entry.clone());
                                 }
@@ -321,17 +376,27 @@ impl eframe::App for ClipApp {
             let now = Utc::now();
 
             if self.seen.contains(&key) {
-                if let Some(pos) = self.history.iter().position(|e| content_key(&e.content) == key) {
+                if let Some(pos) = self
+                    .history
+                    .iter()
+                    .position(|e| content_key(&e.content) == key)
+                {
                     let mut existing = self.history.remove(pos);
                     existing.ts = now;
                     self.history.push(existing);
                 } else {
-                    self.history.push(ClipboardEntry { ts: now, content: entry.content.clone() });
+                    self.history.push(ClipboardEntry {
+                        ts: now,
+                        content: entry.content.clone(),
+                    });
                 }
                 let _ = append_touch(&key, now);
             } else {
                 self.seen.insert(key.clone());
-                let new_entry = ClipboardEntry { ts: now, content: entry.content.clone() };
+                let new_entry = ClipboardEntry {
+                    ts: now,
+                    content: entry.content.clone(),
+                };
                 self.history.push(new_entry.clone());
                 let _ = append_put(&key, &new_entry.content, now);
             }

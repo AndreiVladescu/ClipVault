@@ -1,5 +1,5 @@
 use arboard::ImageData;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use png::{ColorType, Decoder, Encoder};
 
 pub fn image_to_base64(img: &ImageData) -> String {

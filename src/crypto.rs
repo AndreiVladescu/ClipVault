@@ -9,6 +9,7 @@ use std::{
     io::{Read, Write},
 };
 
+//https://kerkour.com/rust-file-encryption
 pub fn encrypt_main(){
     let mut small_file_key = [0u8; 32];
     let mut small_file_nonce = [0u8; 24];

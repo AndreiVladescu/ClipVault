@@ -23,9 +23,18 @@ pub struct Agg {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum LogRec {
-    Put { key: String, ts: DateTime<Utc>, content: ClipboardContent },
-    Touch { key: String, ts: DateTime<Utc> },
+    Put {
+        key: String,
+        ts: DateTime<Utc>,
+        content: ClipboardContent,
+    },
+    Touch {
+        key: String,
+        ts: DateTime<Utc>,
+    },
 }
 
 #[derive(Debug, Clone)]
-pub enum HotkeyMsg { ToggleWindow }
+pub enum HotkeyMsg {
+    ToggleWindow,
+}

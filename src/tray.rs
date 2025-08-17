@@ -1,6 +1,6 @@
 use tray_icon::{
-    menu::{Menu, MenuItem, MenuEvent as TrayMenuEvent, MenuId},
     Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    menu::{Menu, MenuEvent as TrayMenuEvent, MenuId, MenuItem},
 };
 
 pub struct Tray {
@@ -10,7 +10,11 @@ pub struct Tray {
     pub quit_id: MenuId,
 }
 
-pub enum TrayEvent { OpenRequested, QuitRequested, None }
+pub enum TrayEvent {
+    OpenRequested,
+    QuitRequested,
+    None,
+}
 impl Tray {
     pub fn new() -> anyhow::Result<Self> {
         #[cfg(target_os = "linux")]
@@ -37,7 +41,9 @@ impl Tray {
                     .expect("tray build");
 
                 // Send IDs back so main thread can match MenuEvent ids.
-                tx_ids.send((open.id().to_owned(), quit.id().to_owned())).ok();
+                tx_ids
+                    .send((open.id().to_owned(), quit.id().to_owned()))
+                    .ok();
 
                 // Run GTK main loop on this thread
                 gtk::main();
@@ -76,8 +82,7 @@ impl Tray {
         #[cfg(not(target_os = "linux"))]
         if let Ok(ev) = TrayIconEvent::receiver().try_recv() {
             match ev {
-                TrayIconEvent::Click { button, .. }
-                | TrayIconEvent::DoubleClick { button, .. } => {
+                TrayIconEvent::Click { button, .. } | TrayIconEvent::DoubleClick { button, .. } => {
                     if button == MouseButton::Left {
                         return TrayEvent::OpenRequested;
                     }
