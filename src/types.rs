@@ -38,3 +38,10 @@ pub enum LogRec {
 pub enum HotkeyMsg {
     ToggleWindow,
 }
+
+#[derive(Debug)]
+pub enum UnlockResult {
+    Unlocked,
+    Cancelled,
+    Failed,
+}

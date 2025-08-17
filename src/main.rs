@@ -9,7 +9,7 @@ mod ui;
 
 use crate::clip::{clipboard_entry_hash, spawn_watcher};
 use crate::storage::{compact_history_log, load_history_mru};
-use crate::types::{ClipboardEntry, HotkeyMsg};
+use crate::types::{ClipboardEntry, HotkeyMsg, UnlockResult};
 use crossbeam::channel;
 use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
@@ -88,7 +88,9 @@ fn unencrypted_main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
+fn encrypted_main() -> anyhow::Result<()> {
+    let (tx, rx) = channel::bounded::<UnlockResult>(1);
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([300.0, 114.0])
@@ -104,13 +106,34 @@ fn main() -> anyhow::Result<()> {
     let res = eframe::run_native(
         "ClipVault",
         options,
-        Box::new(move |_cc| Ok::<Box<dyn eframe::App>, _>(Box::new(ui::ClipAppLocked::new()))),
+        Box::new(move |_cc| Ok::<Box<dyn eframe::App>, _>(Box::new(
+                ui::ClipAppLocked::new(tx)
+            ))),
     );
 
     if let Err(e) = res {
         eprintln!("eframe error: {e}");
     }
 
-    return Ok(());
+    let outcome = rx
+        .recv_timeout(Duration::from_millis(50))
+        .unwrap_or(UnlockResult::Cancelled);
+    match outcome {
+        UnlockResult::Unlocked => {
+            return Ok(());
+        }
+        UnlockResult::Cancelled => {
+            return Err(anyhow::anyhow!("Failed to unlock ClipVault: {outcome:?}"));
+        }
+        UnlockResult::Failed => {
+            return Err(anyhow::anyhow!("Failed to unlock ClipVault: {outcome:?}"));
+        }
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    if encrypted_main().is_err() {
+        return anyhow::Result::Err(anyhow::anyhow!("Failed to decrypt history."));
+    }
     return unencrypted_main();
 }

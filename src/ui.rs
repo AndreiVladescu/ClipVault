@@ -8,27 +8,34 @@ use std::{
 
 use chrono::Utc;
 use crossbeam::channel::Receiver;
-use egui::{RichText, StrokeKind, Align2};
+use egui::{RichText, StrokeKind};
 
 use crate::clip::{content_key, set_clipboard};
 use crate::img::base64_to_imagedata;
 use crate::paths::history_path;
 use crate::storage::{append_put, append_touch};
-use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg};
-use crate::crypto::{derivate_crypto_params, decrypt_small_file};
+use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg, UnlockResult};
+use crate::crypto::{derivate_crypto_params, decrypt_file};
 
 pub struct ClipAppLocked {
     passphrase: String,
     key: [u8; 32],
     nonce: [u8; 24],
+    loaded_crypto_params: bool,
+
+    outcome_tx: Option<crossbeam::channel::Sender<UnlockResult>>,
+    outcome_sent: bool,
 }
 
 impl ClipAppLocked {
-    pub fn new() -> Self {
+    pub fn new(outcome_tx: crossbeam::channel::Sender<UnlockResult>) -> Self {
         Self {
             passphrase: String::new(),
             key: [0; 32],
             nonce: [0; 24],
+            loaded_crypto_params: false,
+            outcome_tx: Some(outcome_tx),
+            outcome_sent: false,
         }
     }
 
@@ -36,11 +43,11 @@ impl ClipAppLocked {
         let (key, nonce) = derivate_crypto_params(self.passphrase.clone());
         self.key = key;
         self.nonce = nonce;
-        self.passphrase.clear();
+        self.loaded_crypto_params = true;
     }
 
     pub fn try_decrypt_history(&self) -> anyhow::Result<()> {
-        return decrypt_small_file(
+        return decrypt_file(
             history_path().to_str().unwrap(),
             history_path().with_extension("decrypted.json").to_str().unwrap(),
             &self.key,
@@ -66,9 +73,14 @@ impl eframe::App for ClipAppLocked {
             ui.add(passphrase_button).clicked().then(|| {
                 if self.passphrase.is_empty() {
                     // TODO Show error message
+                    println!("Passphrase cannot be empty.");
                 } else {
                     self.set_crypto_params();
                     if (self.try_decrypt_history()).is_ok() {
+                        if let Some(tx) = self.outcome_tx.take() {
+                            let _ = tx.send(UnlockResult::Unlocked);
+                            self.outcome_sent = true;
+                        }
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     } else {
                         // TODO Show error message
@@ -79,6 +91,18 @@ impl eframe::App for ClipAppLocked {
         });
 
 
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if !self.outcome_sent {
+            if let Some(tx) = self.outcome_tx.take() {
+                let _ = tx.send(UnlockResult::Cancelled);
+            }
+        }
+
+        self.key = [0; 32];
+        self.nonce = [0; 24];
+        self.passphrase.clear();
     }
 }
 
