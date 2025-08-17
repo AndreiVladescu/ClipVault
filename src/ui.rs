@@ -8,48 +8,77 @@ use std::{
 
 use chrono::Utc;
 use crossbeam::channel::Receiver;
-use egui::{RichText, StrokeKind};
+use egui::{RichText, StrokeKind, Align2};
 
 use crate::clip::{content_key, set_clipboard};
 use crate::img::base64_to_imagedata;
 use crate::paths::history_path;
 use crate::storage::{append_put, append_touch};
 use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg};
+use crate::crypto::{derivate_crypto_params, decrypt_small_file};
 
 pub struct ClipAppLocked {
     passphrase: String,
+    key: [u8; 32],
+    nonce: [u8; 24],
 }
 
 impl ClipAppLocked {
     pub fn new() -> Self {
         Self {
             passphrase: String::new(),
+            key: [0; 32],
+            nonce: [0; 24],
         }
+    }
+
+    pub fn set_crypto_params(&mut self) {
+        let (key, nonce) = derivate_crypto_params(self.passphrase.clone());
+        self.key = key;
+        self.nonce = nonce;
+        self.passphrase.clear();
+    }
+
+    pub fn try_decrypt_history(&self) -> anyhow::Result<()> {
+        return decrypt_small_file(
+            history_path().to_str().unwrap(),
+            history_path().with_extension("decrypted.json").to_str().unwrap(),
+            &self.key,
+            &self.nonce,
+        );
     }
 }
 
 impl eframe::App for ClipAppLocked {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            
             ui.label(
                 egui::RichText::new(
                     "ClipVault is locked.\n\nTo unlock you need to enter the passphrase.",
                 )
                 .size(14.0),
             );
-            //ui.label("Enter passphrase to unlock:");
             ui.separator();
             ui.text_edit_singleline(&mut self.passphrase);
             let passphrase_button =
                 egui::Button::new(RichText::new("Unlock").size(16.0)).corner_radius(6.0);
             ui.add(passphrase_button).clicked().then(|| {
-                if self.passphrase == "your_secret_passphrase" {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                if self.passphrase.is_empty() {
+                    // TODO Show error message
                 } else {
-                    ui.label(RichText::new("Incorrect passphrase").color(egui::Color32::RED));
+                    self.set_crypto_params();
+                    if (self.try_decrypt_history()).is_ok() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    } else {
+                        // TODO Show error message
+                        println!("Failed to decrypt history with the provided passphrase.");
+                    }
                 }
             });
         });
+
+
     }
 }
 

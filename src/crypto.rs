@@ -3,10 +3,16 @@ use chacha20poly1305::{
     aead::{stream, Aead, NewAead},
     XChaCha20Poly1305,
 };
-use rand::{rngs::OsRng, RngCore};
 use std::{
     fs::{self, File},
     io::{Read, Write},
+};
+use argon2::{
+    password_hash::{
+        rand_core::OsRng,
+        PasswordHash, PasswordHasher, PasswordVerifier, SaltString
+    },
+    Argon2
 };
 
 //https://kerkour.com/rust-file-encryption
@@ -21,7 +27,21 @@ pub fn encrypt_main(){
     decrypt_small_file("/home/admin-andrei/Downloads/encrypted.txt", "/home/admin-andrei/Downloads/decrypted.txt", &small_file_key, &small_file_nonce);
 }
 
-fn encrypt_small_file(
+pub fn derivate_crypto_params(passphrase: String) -> ([u8; 32], [u8; 24]) {
+    let mut key = [0u8; 32];
+    let mut nonce = [0u8; 24];
+    let salt = b"saltyMcSaltface";
+    let mut argon2_output = [0u8; 56];
+
+    Argon2::default().hash_password_into(passphrase.as_bytes(), salt, &mut argon2_output)
+        .expect("Failed to hash password");
+
+    key.copy_from_slice(&argon2_output[..32]);
+    nonce.copy_from_slice(&argon2_output[32..56]);
+    (key, nonce)
+}
+
+pub fn encrypt_small_file(
     filepath: &str,
     dist: &str,
     key: &[u8; 32],
@@ -40,7 +60,7 @@ fn encrypt_small_file(
     Ok(())
 }
 
-fn decrypt_small_file(
+pub fn decrypt_small_file(
     encrypted_file_path: &str,
     dist: &str,
     key: &[u8; 32],
