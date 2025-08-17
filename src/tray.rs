@@ -62,7 +62,9 @@ impl Tray {
             menu.append(&quit)?;
 
             let icon = load_icon_png(include_bytes!("../img/tray.png"))
-                .unwrap_or_else(|_| gen_fallback_icon());
+                .unwrap_or_else(|_| {
+                    anyhow::bail!("Failed to load tray icon. Ensure the image is a valid PNG.");
+                });
 
             let tray_icon = TrayIconBuilder::new()
                 .with_tooltip("ClipVault")
