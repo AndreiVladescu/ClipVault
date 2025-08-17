@@ -5,6 +5,7 @@ mod clip;
 mod ui;
 mod tray;
 mod paths;
+mod crypto;
 
 use crate::clip::{clipboard_entry_hash, spawn_watcher};
 use crate::storage::{compact_history_log, load_history_mru};
@@ -22,30 +23,27 @@ use std::{
 };
 
 
-fn main() -> anyhow::Result<()> {
+fn unencrypted_main() -> anyhow::Result<()> {
+    let (hk_tx, hk_rx) = channel::unbounded::<HotkeyMsg>();
+    std::thread::spawn(move || {
+        let mgr = GlobalHotKeyManager::new().expect("hotkey manager");
+        let hk = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyV);
+        mgr.register(hk).expect("register hotkey");
 
-        let (hk_tx, hk_rx) = channel::unbounded::<HotkeyMsg>();
+        let rx = GlobalHotKeyEvent::receiver();
 
+        // Debounce
+        let mut last = Instant::now() - Duration::from_millis(500);
 
-        std::thread::spawn(move || {
-            let mgr = GlobalHotKeyManager::new().expect("hotkey manager");
-            let hk = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyV);
-            mgr.register(hk).expect("register hotkey");
-
-            let rx = GlobalHotKeyEvent::receiver();
-
-            // simple debounce to avoid repeats
-            let mut last = Instant::now() - Duration::from_millis(500);
-
-            loop {
-                if let Ok(ev) = rx.recv() {
-                    if ev.state == HotKeyState::Pressed && last.elapsed() > Duration::from_millis(250) {
-                        let _ = hk_tx.send(HotkeyMsg::ToggleWindow);
-                        last = Instant::now();
-                    }
+        loop {
+            if let Ok(ev) = rx.recv() {
+                if ev.state == HotKeyState::Pressed && last.elapsed() > Duration::from_millis(250) {
+                    let _ = hk_tx.send(HotkeyMsg::ToggleWindow);
+                    last = Instant::now();
                 }
             }
-        });
+        }
+    });
     
     if let Err(e) = compact_history_log() {
         eprintln!("Compaction failed: {e}");
@@ -91,4 +89,10 @@ fn main() -> anyhow::Result<()> {
 
     if let Err(e) = res { eprintln!("eframe error: {e}"); }
     Ok(())
+}
+
+fn main() -> anyhow::Result<()> {
+    
+    
+    return unencrypted_main();
 }
