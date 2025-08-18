@@ -2,7 +2,7 @@
 use crate::assets::ICON_TRAY;
 
 use tray_icon::{
-    Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent as TrayMenuEvent, MenuId, MenuItem},
 };
 
