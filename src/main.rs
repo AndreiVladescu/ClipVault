@@ -28,7 +28,7 @@ fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
     let (hk_tx, hk_rx) = channel::unbounded::<HotkeyMsg>();
     std::thread::spawn(move || {
         let mgr = GlobalHotKeyManager::new().expect("hotkey manager");
-        let hk = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyV);
+        let hk = HotKey::new(Some(Modifiers::SUPER), Code::KeyV);
         mgr.register(hk).expect("register hotkey");
 
         let rx = GlobalHotKeyEvent::receiver();
