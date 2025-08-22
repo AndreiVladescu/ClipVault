@@ -1,20 +1,18 @@
-use crate::tray;
-use crate::tray::TrayEvent;
+use crate::assets::{ICON_SETTINGS, load_texture_from_asset};
 use crate::clip::{content_key, set_clipboard};
 use crate::crypto::{decrypt_file, derivate_crypto_params, derive_save_nonce};
 use crate::img::base64_to_imagedata;
 use crate::paths::history_path;
 use crate::storage::Store;
-use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg, UnlockResult, Meta};
-use crate::assets::{load_texture_from_asset, ICON_SETTINGS};
+use crate::tray;
+use crate::tray::TrayEvent;
+use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg, Meta, UnlockResult};
 
+use anyhow::anyhow;
 use chrono::Utc;
 use crossbeam::channel::Receiver;
 use egui::{RichText, StrokeKind};
-use anyhow::anyhow;
-use std::{
-    collections::HashMap,
-};
+use std::collections::HashMap;
 
 pub struct ClipAppLocked {
     passphrase: String,
@@ -47,102 +45,135 @@ impl ClipAppLocked {
         self.loaded_crypto_params = true;
     }
 
-pub fn try_decrypt_history(&self) -> anyhow::Result<()> {
-    let path = history_path();
-    let meta_path = path.with_extension("meta.json");
+    pub fn try_decrypt_history(&self) -> anyhow::Result<()> {
+        let path = history_path();
+        let meta_path = path.with_extension("meta.json");
 
-    // helper to attempt a decrypt with a given nonce
-    let try_nonce = |nonce: [u8; 24]| -> anyhow::Result<()> {
-        decrypt_file(path.to_str().unwrap(), &self.key, &nonce).0
-    };
+        // helper to attempt a decrypt with a given nonce
+        let try_nonce = |nonce: [u8; 24]| -> anyhow::Result<()> {
+            decrypt_file(path.to_str().unwrap(), &self.key, &nonce).0
+        };
 
-    if meta_path.exists() {
-        // read sidecar meta to learn the save counter
-        let bytes = std::fs::read(&meta_path)?;
-        let meta: Meta = serde_json::from_slice(&bytes)?;
-        if meta.next_counter > 0 {
-            // most recent successful save used counter = next_counter - 1
-            let c_prev = meta.next_counter.saturating_sub(1);
-            let n_prev = derive_save_nonce(&self.key, &self.nonce, c_prev);
-            if try_nonce(n_prev).is_ok() {
+        if meta_path.exists() {
+            // Read sidecar meta to learn the save counter
+            let bytes = std::fs::read(&meta_path)?;
+            let meta: Meta = serde_json::from_slice(&bytes)?;
+            if meta.next_counter > 0 {
+                // Most recent successful save used counter = next_counter - 1
+                let c_prev = meta.next_counter.saturating_sub(1);
+                let n_prev = derive_save_nonce(&self.key, &self.nonce, c_prev);
+                if try_nonce(n_prev).is_ok() {
+                    return Ok(());
+                }
+                // If meta advanced before data finished writing, try current next_counter
+                let n_curr = derive_save_nonce(&self.key, &self.nonce, meta.next_counter);
+                if try_nonce(n_curr).is_ok() {
+                    return Ok(());
+                }
+            }
+            // Fallback for very old files that used the base nonce directly
+            try_nonce(self.nonce)
+                .map_err(|_| anyhow!("Decryption failed with derived and base nonces"))
+        } else {
+            // If no legacy file; try base nonce, then first derived counter = 1
+            if try_nonce(self.nonce).is_ok() {
                 return Ok(());
             }
-            // if meta advanced before data finished writing, try current next_counter
-            let n_curr = derive_save_nonce(&self.key, &self.nonce, meta.next_counter);
-            if try_nonce(n_curr).is_ok() {
-                return Ok(());
+            let n1 = derive_save_nonce(&self.key, &self.nonce, 1);
+            try_nonce(n1).map_err(|_| anyhow!("Decryption failed (no meta present)"))
+        }
+    }
+    fn passphrase_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut submit = false;
+
+        ui.horizontal(|ui| {
+            let old_spacing = ui.spacing().clone();
+            ui.spacing_mut().item_spacing.x = 4.0;
+
+            let h = ui.spacing().interact_size.y;
+            let eye_resp = ui
+                .add_sized([h, h], egui::Button::new(egui::RichText::new("👁")))
+                .on_hover_text("Hold to show");
+            let held = eye_resp.is_pointer_button_down_on();
+
+            let field_resp = ui.add(
+                egui::TextEdit::singleline(&mut self.passphrase)
+                    .password(!held)
+                    .desired_width(f32::INFINITY),
+            );
+            if field_resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                submit = true;
+            }
+
+            *ui.spacing_mut() = old_spacing;
+        });
+
+        let btn_text = if self.create_mode { "Create" } else { "Unlock" };
+        let pass_btn =
+            egui::Button::new(egui::RichText::new(btn_text).size(16.0)).corner_radius(6.0);
+        if ui
+            .add_sized(
+                [ui.available_width(), ui.spacing().interact_size.y],
+                pass_btn,
+            )
+            .clicked()
+        {
+            submit = true;
+        }
+
+        submit
+    }
+
+    fn handle_submit(&mut self, ctx: &egui::Context) {
+        if self.passphrase.is_empty() {
+            println!("Passphrase cannot be empty.");
+            return;
+        }
+        self.set_crypto_params();
+        if self.create_mode {
+            if let Some(tx) = self.outcome_tx.take() {
+                let _ = tx.send(UnlockResult::Unlocked {
+                    key: self.key,
+                    nonce: self.nonce,
+                });
+                self.outcome_sent = true;
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else {
+            if self.try_decrypt_history().is_ok() {
+                if let Some(tx) = self.outcome_tx.take() {
+                    let _ = tx.send(UnlockResult::Unlocked {
+                        key: self.key,
+                        nonce: self.nonce,
+                    });
+                    self.outcome_sent = true;
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else {
+                println!("Failed to decrypt history with the provided passphrase.");
             }
         }
-        // fallback for very old files that used the base nonce directly
-        try_nonce(self.nonce).map_err(|_| anyhow!("decryption failed with derived and base nonces"))
-    } else {
-        // no meta → legacy file; try base nonce, then first derived counter = 1
-        if try_nonce(self.nonce).is_ok() {
-            return Ok(());
-        }
-        let n1 = derive_save_nonce(&self.key, &self.nonce, 1);
-        try_nonce(n1).map_err(|_| anyhow!("decryption failed (no meta present)"))
     }
 }
-}
-
 
 impl eframe::App for ClipAppLocked {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let msg_locked = "ClipVault is locked.\n\nTo unlock you need to enter the passphrase.";
-            let msg_create =
-                "ClipVault is not initialized.\n\nSet passphrase first.";
+            let msg_create = "ClipVault is not initialized.\n\nSet passphrase first.";
             ui.label(
-                egui::RichText::new(if self.create_mode {
+                RichText::new(if self.create_mode {
                     msg_create
                 } else {
                     msg_locked
                 })
                 .size(14.0),
             );
-
             ui.separator();
-            ui.text_edit_singleline(&mut self.passphrase);
 
-            let btn_text = if self.create_mode { "Create" } else { "Unlock" };
-            let passphrase_button =
-                egui::Button::new(RichText::new(btn_text).size(16.0)).corner_radius(6.0);
-
-            ui.add(passphrase_button).clicked().then(|| {
-                if self.passphrase.is_empty() {
-                    // TODO Show error message
-                    println!("Passphrase cannot be empty.");
-                } else {
-                    self.set_crypto_params();
-                    if self.create_mode {
-                        // Accept passphrase and proceed
-                        if let Some(tx) = self.outcome_tx.take() {
-                            let _ = tx.send(UnlockResult::Unlocked {
-                                key: self.key,
-                                nonce: self.nonce,
-                            });
-                            self.outcome_sent = true;
-                        }
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    } else {
-                        // Existing file: verify passphrase by decrypting
-                        if self.try_decrypt_history().is_ok() {
-                            if let Some(tx) = self.outcome_tx.take() {
-                                let _ = tx.send(UnlockResult::Unlocked {
-                                    key: self.key,
-                                    nonce: self.nonce,
-                                });
-                                self.outcome_sent = true;
-                            }
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        } else {
-                            // TODO Show error message
-                            println!("Failed to decrypt history with the provided passphrase.");
-                        }
-                    }
-                }
-            });
+            if self.passphrase_ui(ui) {
+                self.handle_submit(ctx);
+            }
         });
     }
 
