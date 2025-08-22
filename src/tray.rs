@@ -2,9 +2,13 @@
 use crate::assets::ICON_TRAY;
 
 use tray_icon::{
-    MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
-    menu::{Menu, MenuEvent as TrayMenuEvent, MenuId, MenuItem},
+    TrayIconBuilder,
+    menu::{Menu, MenuEvent as 
+        TrayMenuEvent, MenuId, MenuItem},
 };
+
+#[cfg(target_os = "windows")]
+use tray_icon::{MouseButton, TrayIcon, TrayIconEvent};
 
 pub struct Tray {
     #[cfg(not(target_os = "linux"))]

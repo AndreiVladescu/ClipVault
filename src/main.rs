@@ -88,13 +88,11 @@ fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
     Ok(())
 }
 
-
 fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
     let (tx, rx) = channel::bounded::<UnlockResult>(1);
 
     let icon = get_bytes(ICON_TRAY)
         .and_then(|b| icon_data_from_png(&b)).unwrap();
-
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
