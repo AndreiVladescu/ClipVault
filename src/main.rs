@@ -28,7 +28,7 @@ fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
     let (hk_tx, hk_rx) = channel::unbounded::<HotkeyMsg>();
     std::thread::spawn(move || {
         let mgr = GlobalHotKeyManager::new().expect("hotkey manager");
-        let hk = HotKey::new(Some(Modifiers::SUPER), Code::KeyV);
+        let hk = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyV);
         mgr.register(hk).expect("register hotkey");
 
         let rx = GlobalHotKeyEvent::receiver();
@@ -69,15 +69,19 @@ fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let tray = std::sync::Arc::new(tray::Tray::new()?);
-    let tray_clone = tray.clone();
-
     let res = eframe::run_native(
         "ClipVault",
         options,
-        Box::new(move |_cc| {
+        Box::new(move |cc| {
+            let tray = std::sync::Arc::new(
+                tray::Tray::new(cc.egui_ctx.clone()).expect("tray init failed")
+            );
+
             Ok::<Box<dyn eframe::App>, _>(Box::new(ui::ClipApp::new(
-                tray_clone, rx, store, hk_rx,
+                tray,
+                rx,
+                store,
+                hk_rx,
             )))
         }),
     );
@@ -87,7 +91,6 @@ fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
 
 fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
     let (tx, rx) = channel::bounded::<UnlockResult>(1);
