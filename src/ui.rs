@@ -83,6 +83,7 @@ impl ClipAppLocked {
             try_nonce(n1).map_err(|_| anyhow!("Decryption failed (no meta present)"))
         }
     }
+    
     fn passphrase_ui(&mut self, ui: &mut egui::Ui) -> bool {
         let mut submit = false;
 
@@ -330,7 +331,6 @@ impl eframe::App for ClipApp {
         match self.tray.try_recv() {
             TrayEvent::OpenRequested => self.show_main(ctx),
             TrayEvent::QuitRequested => {
-                // request close
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 self.store.force_save().ok();
                 return;
@@ -397,12 +397,18 @@ impl eframe::App for ClipApp {
                     let entry: ClipboardEntry = items[idx].clone();
 
                     if !q.is_empty() {
-                        if let ClipboardContent::Text(t) = &entry.content {
-                            if !t.to_lowercase().contains(&q) {
+                        match &entry.content {
+                            ClipboardContent::Text(t) => {
+                                if !t.to_lowercase().contains(&q) {
+                                    continue;
+                                }
+                            }
+                            ClipboardContent::ImageBase64(_) => {
                                 continue;
                             }
                         }
                     }
+
                     let (_key, tex_opt) = match &entry.content {
                         ClipboardContent::ImageBase64(b64) => {
                             let k = content_key(&entry.content);

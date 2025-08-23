@@ -24,7 +24,11 @@ use global_hotkey::{
 
 use std::time::{Duration, Instant};
 
-fn unencrypted_main(key: [u8; 32], nonce: [u8; 24], activate_rx: crossbeam::channel::Receiver<()>) -> anyhow::Result<()> {
+fn unencrypted_main(
+    key: [u8; 32],
+    nonce: [u8; 24],
+    activate_rx: crossbeam::channel::Receiver<()>,
+) -> anyhow::Result<()> {
     let (hk_tx, hk_rx) = channel::unbounded::<HotkeyMsg>();
     std::thread::spawn(move || {
         let mgr = GlobalHotKeyManager::new().expect("hotkey manager");
@@ -80,7 +84,13 @@ fn unencrypted_main(key: [u8; 32], nonce: [u8; 24], activate_rx: crossbeam::chan
         "ClipVault",
         options,
         Box::new(move |_cc| {
-            Ok::<Box<dyn eframe::App>, _>(Box::new(ui::ClipApp::new(tray_clone, rx, store, hk_rx, activate_rx)))
+            Ok::<Box<dyn eframe::App>, _>(Box::new(ui::ClipApp::new(
+                tray_clone,
+                rx,
+                store,
+                hk_rx,
+                activate_rx,
+            )))
         }),
     );
 
