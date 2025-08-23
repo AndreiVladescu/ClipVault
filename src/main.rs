@@ -96,7 +96,7 @@ fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([300.0, 114.0])
+            .with_inner_size([300.0, 118.0])
             .with_resizable(false)
             .with_visible(true)
             .with_icon(icon),

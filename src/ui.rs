@@ -90,17 +90,22 @@ impl ClipAppLocked {
             let old_spacing = ui.spacing().clone();
             ui.spacing_mut().item_spacing.x = 4.0;
 
-            let h = ui.spacing().interact_size.y;
+            let eye_side = ui.spacing().interact_size.y * 1.2;
+            let eye_label = egui::RichText::new("👁").size(eye_side * 0.7);
             let eye_resp = ui
-                .add_sized([h, h], egui::Button::new(egui::RichText::new("👁")))
+                .add_sized([eye_side, eye_side], egui::Button::new(eye_label))
                 .on_hover_text("Hold to show");
             let held = eye_resp.is_pointer_button_down_on();
 
-            let field_resp = ui.add(
+            let text_font = egui::FontId::proportional(eye_side * 0.55);
+
+            let field_resp = ui.add_sized(
+                [ui.available_width(), eye_side],
                 egui::TextEdit::singleline(&mut self.passphrase)
                     .password(!held)
-                    .desired_width(f32::INFINITY),
+                    .font(text_font),
             );
+
             if field_resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 submit = true;
             }
