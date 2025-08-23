@@ -1,18 +1,20 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+mod assets;
 mod clip;
 mod crypto;
 mod img;
 mod paths;
+mod singleton;
 mod storage;
 mod tray;
 mod types;
 mod ui;
-mod assets;
 
-use crate::assets::{get_bytes, icon_data_from_png, ICON_TRAY};
+use crate::assets::{ICON_TRAY, get_bytes, icon_data_from_png};
 use crate::clip::{clipboard_entry_hash, spawn_watcher};
-use crate::types::{HotkeyMsg, UnlockResult};
+use crate::singleton::setup_single_instance;
 use crate::storage::Store;
+use crate::types::{HotkeyMsg, UnlockResult};
 
 use crossbeam::channel;
 use global_hotkey::{
@@ -20,11 +22,9 @@ use global_hotkey::{
     hotkey::{Code, HotKey, Modifiers},
 };
 
-use std::{
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
-fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
+fn unencrypted_main(key: [u8; 32], nonce: [u8; 24], activate_rx: crossbeam::channel::Receiver<()>) -> anyhow::Result<()> {
     let (hk_tx, hk_rx) = channel::unbounded::<HotkeyMsg>();
     std::thread::spawn(move || {
         let mgr = GlobalHotKeyManager::new().expect("hotkey manager");
@@ -47,13 +47,17 @@ fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
     });
 
     let store = Store::open_or_create(key, nonce)?;
-    let last_hash = store.entries().last().map(|e| clipboard_entry_hash(&e.content));
+    let last_hash = store
+        .entries()
+        .last()
+        .map(|e| clipboard_entry_hash(&e.content));
 
     let (tx, rx) = crossbeam::channel::unbounded();
     spawn_watcher(tx, last_hash);
 
     let icon = get_bytes(ICON_TRAY)
-        .and_then(|b| icon_data_from_png(&b)).unwrap();
+        .and_then(|b| icon_data_from_png(&b))
+        .unwrap();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -76,9 +80,7 @@ fn unencrypted_main(key: [u8; 32], nonce: [u8; 24]) -> anyhow::Result<()> {
         "ClipVault",
         options,
         Box::new(move |_cc| {
-            Ok::<Box<dyn eframe::App>, _>(Box::new(ui::ClipApp::new(
-                tray_clone, rx, store, hk_rx,
-            )))
+            Ok::<Box<dyn eframe::App>, _>(Box::new(ui::ClipApp::new(tray_clone, rx, store, hk_rx, activate_rx)))
         }),
     );
 
@@ -92,7 +94,8 @@ fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
     let (tx, rx) = channel::bounded::<UnlockResult>(1);
 
     let icon = get_bytes(ICON_TRAY)
-        .and_then(|b| icon_data_from_png(&b)).unwrap();
+        .and_then(|b| icon_data_from_png(&b))
+        .unwrap();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -110,9 +113,7 @@ fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
     let res = eframe::run_native(
         "ClipVault",
         options,
-        Box::new(move |_cc| Ok::<Box<dyn eframe::App>, _>(Box::new(
-                ui::ClipAppLocked::new(tx)
-            ))),
+        Box::new(move |_cc| Ok::<Box<dyn eframe::App>, _>(Box::new(ui::ClipAppLocked::new(tx)))),
     );
 
     if let Err(e) = res {
@@ -134,10 +135,15 @@ fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
 }
 
 fn main() -> anyhow::Result<()> {
+    let (activate_tx, activate_rx) = crossbeam::channel::unbounded();
+    if !setup_single_instance(activate_tx.clone()) {
+        return Ok(());
+    }
+
     let crypto_params = encrypted_main();
     match crypto_params {
         Ok((key, nonce)) => {
-            if let Err(e) = unencrypted_main(key, nonce) {
+            if let Err(e) = unencrypted_main(key, nonce, activate_rx) {
                 eprintln!("Error in unencrypted main: {e}");
                 return Err(e);
             }

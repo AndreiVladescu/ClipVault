@@ -202,6 +202,7 @@ pub struct ClipApp {
     filter: String,
     tex_cache: HashMap<String, egui::TextureHandle>,
 
+    activate_rx: crossbeam::channel::Receiver<()>,
     hotkey_rx: Receiver<HotkeyMsg>,
     window_visible: bool,
     show_settings: bool,
@@ -214,11 +215,13 @@ impl ClipApp {
         rx: crossbeam::channel::Receiver<ClipboardEntry>,
         store: Store,
         hotkey_rx: Receiver<HotkeyMsg>,
+        activate_rx: crossbeam::channel::Receiver<()>,
     ) -> Self {
         Self {
             tray,
             rx,
             store,
+            activate_rx,
             filter: String::new(),
             tex_cache: HashMap::new(),
             show_settings: false,
@@ -309,6 +312,10 @@ fn clickable_row(ui: &mut egui::Ui, text: &str) -> egui::Response {
 
 impl eframe::App for ClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        while let Ok(()) = self.activate_rx.try_recv() {
+            self.show_main(ctx);
+        }
+
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.hide_main(ctx);
             return;
