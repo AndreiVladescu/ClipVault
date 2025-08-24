@@ -39,29 +39,6 @@ sudo apt install \
   libxi6 libxtst6 libxinerama1 libxcursor1 libxrandr2 libxrender1 \
   libwayland-client0
 ```
-#### Fedora (and RHEL clones)
-```
-sudo dnf install \
-  gtk3 \
-  glib2 \
-  pango \
-  gdk-pixbuf2 \
-  atk \
-  cairo \
-  libX11 \
-  libxkbcommon \
-  xdotool-libs \
-  libXi libXtst libXinerama libXcursor libXrandr libXrender \
-  wayland-libs-client
-```
-#### Arch/Manjaro
-```
-sudo pacman -S --needed \
-  gtk3 glib2 pango gdk-pixbuf2 atk cairo \
-  libx11 libxkbcommon xdotool \
-  libxi libxtst libxinerama libxcursor libxrandr libxrender \
-  wayland
-```
 ### Build prerequisites
 
 #### Debian/Ubuntu/Mint
@@ -72,25 +49,6 @@ sudo apt install \
   libatk1.0-dev libcairo2-dev libx11-dev libxkbcommon-dev libxdo-dev
 sudo apt install libayatana-appindicator3-dev || sudo apt install libappindicator3-dev
 curl https://sh.rustup.rs -sSf | sh
-```
-#### Fedora
-```
-sudo dnf groupinstall "Development Tools"
-sudo dnf install clang pkgconf-pkg-config rustup
-sudo dnf install \
-  gtk3-devel glib2-devel pango-devel gdk-pixbuf2-devel \
-  atk-devel cairo-devel libX11-devel libxkbcommon-devel libxdo-devel
-sudo dnf install libappindicator-gtk3-devel || sudo dnf install libayatana-appindicator-gtk3
-rustup default stable
-```
-#### Arch/Manjaro
-```
-sudo pacman -S --needed base-devel clang pkgconf rustup
-sudo pacman -S --needed \
-  gtk3 glib2 pango gdk-pixbuf2 atk cairo \
-  libx11 libxkbcommon xdotool \
-  libappindicator-gtk3
-rustup default stable
 ```
 
 #### Building it
