@@ -6,6 +6,7 @@ use std::borrow::Cow;
 pub struct Assets;
 
 pub const ICON_SETTINGS: &str = "ui/settings.png";
+pub const ICON_IMAGE_FILTER: &str = "ui/gallery.png";
 pub const ICON_TRAY: &str = "icons/tray.png";
 
 pub fn get_bytes(path: &str) -> Option<Cow<'static, [u8]>> {

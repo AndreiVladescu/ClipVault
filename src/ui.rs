@@ -1,4 +1,4 @@
-use crate::assets::{ICON_SETTINGS, load_texture_from_asset};
+use crate::assets::{ICON_IMAGE_FILTER, ICON_SETTINGS, load_texture_from_asset};
 use crate::clip::{content_key, set_clipboard};
 use crate::crypto::{decrypt_file, derivate_crypto_params, derive_save_nonce};
 use crate::img::base64_to_imagedata;
@@ -83,7 +83,7 @@ impl ClipAppLocked {
             try_nonce(n1).map_err(|_| anyhow!("Decryption failed (no meta present)"))
         }
     }
-    
+
     fn passphrase_ui(&mut self, ui: &mut egui::Ui) -> bool {
         let mut submit = false;
 
@@ -100,14 +100,14 @@ impl ClipAppLocked {
 
             let text_font = egui::FontId::proportional(eye_side * 0.55);
 
-            let field_resp = ui.add_sized(
+            let _ = ui.add_sized(
                 [ui.available_width(), eye_side],
                 egui::TextEdit::singleline(&mut self.passphrase)
                     .password(!held)
                     .font(text_font),
             );
 
-            if field_resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 submit = true;
             }
 
@@ -350,7 +350,49 @@ impl eframe::App for ClipApp {
                 ui.heading(egui::RichText::new("ClipVault").size(24.0));
                 ui.separator();
                 ui.label(egui::RichText::new("Filter").size(18.0));
-                ui.text_edit_singleline(&mut self.filter);
+
+                let id = egui::Id::new("images_only_toggle");
+                let mut images_only = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<bool>(id).unwrap_or(false));
+
+                if let Some(tex) = load_texture_from_asset(ctx, ICON_IMAGE_FILTER) {
+                    let size = egui::vec2(20.0, 20.0);
+                    let sized = egui::load::SizedTexture { id: tex.id(), size };
+                    let resp = ui
+                        .add(egui::ImageButton::new(sized).corner_radius(4.0).frame(true))
+                        .on_hover_text(if images_only {
+                            "Images only (on)"
+                        } else {
+                            "Images only (off)"
+                        });
+
+                    if images_only {
+                        let r = resp.rect.expand(2.0);
+                        ui.painter().rect_stroke(
+                            r,
+                            egui::CornerRadius::same(4),
+                            egui::Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    if resp.clicked() {
+                        images_only = !images_only;
+                        ui.ctx().data_mut(|d| d.insert_persisted(id, images_only));
+                    }
+                }
+
+                let icon_w = 26.0;
+                let h = ui.spacing().interact_size.y * 1.3;
+                let avail =
+                    (ui.available_width() - icon_w - ui.spacing().item_spacing.x).max(120.0);
+
+                let edit = egui::TextEdit::singleline(&mut self.filter)
+                    .desired_width(f32::INFINITY)
+                    .font(egui::FontId::proportional(18.0));
+
+                ui.add_sized([avail, h], edit);
+
                 if let Some(tex) = load_texture_from_asset(ctx, ICON_SETTINGS) {
                     let size = egui::vec2(24.0, 24.0);
                     let sized_tex = egui::load::SizedTexture { id: tex.id(), size };
@@ -392,20 +434,24 @@ impl eframe::App for ClipApp {
                 });
 
                 let items = self.store.entries();
+                let id = egui::Id::new("images_only_toggle");
+                let images_only = ctx.data_mut(|d| d.get_persisted::<bool>(id).unwrap_or(false));
                 let q: String = self.filter.to_lowercase();
                 for idx in (0..items.len()).rev() {
                     let entry: ClipboardEntry = items[idx].clone();
 
-                    if !q.is_empty() {
+                    if images_only {
+                        if !matches!(entry.content, ClipboardContent::ImageBase64(_)) {
+                            continue;
+                        }
+                    } else if !q.is_empty() {
                         match &entry.content {
                             ClipboardContent::Text(t) => {
                                 if !t.to_lowercase().contains(&q) {
                                     continue;
                                 }
                             }
-                            ClipboardContent::ImageBase64(_) => {
-                                continue;
-                            }
+                            ClipboardContent::ImageBase64(_) => continue,
                         }
                     }
 
