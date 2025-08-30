@@ -1,6 +1,8 @@
 use std::env;
 use std::process::exit;
 
+use crate::storage::Store;
+
 pub enum CliArgs {
     NoArguments,
     Help,
@@ -40,7 +42,7 @@ pub fn cli_args_handler() {
         }
         CliArgs::CleanHistory => {
             println!("Cleaning clipboard history...");
-            // TODO
+            Store::clean_history();
             exit(0);
         }
         CliArgs::Unknown => {

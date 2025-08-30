@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
@@ -46,6 +47,13 @@ pub struct Store {
 }
 
 impl Store {
+    pub fn clean_history() {
+        let path = history_path();
+        let _ = fs::remove_file(path);
+        let path = meta_path();
+        let _ = fs::remove_file(path);
+    }
+
     pub fn open_or_create(key: [u8; 32], base_nonce: [u8; 24]) -> Result<Self> {
         let path = history_path();
         let mut meta = load_meta()?;
