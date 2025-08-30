@@ -9,12 +9,14 @@ mod storage;
 mod tray;
 mod types;
 mod ui;
+mod parser;
 
 use crate::assets::{ICON_TRAY, get_bytes, icon_data_from_png};
 use crate::clip::{clipboard_entry_hash, spawn_watcher};
 use crate::singleton::setup_single_instance;
 use crate::storage::Store;
 use crate::types::{HotkeyMsg, UnlockResult};
+use crate::parser::cli_args_handler;
 
 use crossbeam::channel;
 use global_hotkey::{
@@ -145,6 +147,9 @@ fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
 }
 
 fn main() -> anyhow::Result<()> {
+
+    cli_args_handler();
+
     let (activate_tx, activate_rx) = crossbeam::channel::unbounded();
     if !setup_single_instance(activate_tx.clone()) {
         return Ok(());
