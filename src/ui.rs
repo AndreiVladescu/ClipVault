@@ -12,6 +12,7 @@ use anyhow::anyhow;
 use chrono::Utc;
 use crossbeam::channel::Receiver;
 use egui::{RichText, StrokeKind};
+use notify_rust::{Hint, Notification, Timeout, Urgency};
 use std::collections::HashMap;
 
 pub struct ClipAppLocked {
@@ -132,7 +133,7 @@ impl ClipAppLocked {
 
     fn handle_submit(&mut self, ctx: &egui::Context) {
         if self.passphrase.is_empty() {
-            println!("Passphrase cannot be empty.");
+            self.notify_error("Passphrase cannot be empty.");
             return;
         }
         self.set_crypto_params();
@@ -156,8 +157,22 @@ impl ClipAppLocked {
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             } else {
-                println!("Failed to decrypt history with the provided passphrase.");
+                self.notify_error("Wrong passphrase. Please try again.");
             }
+        }
+    }
+    fn notify_error(&self, msg: &str) {
+        let res = Notification::new()
+            .appname("ClipVault")
+            .summary("ClipVault")
+            .body(msg)
+            .urgency(Urgency::Critical)
+            .timeout(Timeout::Milliseconds(4000))
+            .hint(Hint::Transient(true))
+            .hint(Hint::Category("im.received".into()))
+            .show();
+        if res.is_err() {
+            println!("Failed to show notification.");
         }
     }
 }
