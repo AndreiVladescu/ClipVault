@@ -5,17 +5,18 @@ There are known compatibility issues regarding the `eframe` framework and `Windo
 
 ClipVault lives in your **system tray**, supports a global hotkey [Super+V] to toggle the window, and **encrypts your history at rest** using an Argon2-derived key and **XChaCha20-Poly1305**.
 
+![Presentation image](https://raw.githubusercontent.com/AndreiVladescu/ClipVault/refs/heads/master/img/presentation.png)
 
 ## How it looks
 
 ### Unlocking it
-![alt text](https://raw.githubusercontent.com/AndreiVladescu/ClipVault/refs/heads/master/img/unlock_clipvault.png)
+![How it's unlocked](https://raw.githubusercontent.com/AndreiVladescu/ClipVault/refs/heads/master/img/unlock_clipvault.png)
 
 ### Main window after unlocking it
-![alt text](https://raw.githubusercontent.com/AndreiVladescu/ClipVault/refs/heads/master/img/main_clipvault.png)
+![Main window](https://raw.githubusercontent.com/AndreiVladescu/ClipVault/refs/heads/master/img/main_clipvault.png)
 
 ### Additional options panel
-![alt text](https://raw.githubusercontent.com/AndreiVladescu/ClipVault/refs/heads/master/img/additional_options.png)
+![Options menu](https://raw.githubusercontent.com/AndreiVladescu/ClipVault/refs/heads/master/img/additional_options.png)
 
 ## How to use it
 
