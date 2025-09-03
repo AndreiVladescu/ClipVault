@@ -3,20 +3,20 @@ mod assets;
 mod clip;
 mod crypto;
 mod img;
+mod parser;
 mod paths;
 mod singleton;
 mod storage;
 mod tray;
 mod types;
 mod ui;
-mod parser;
 
 use crate::assets::{ICON_TRAY, get_bytes, icon_data_from_png};
 use crate::clip::{clipboard_entry_hash, spawn_watcher};
+use crate::parser::cli_args_handler;
 use crate::singleton::setup_single_instance;
 use crate::storage::Store;
 use crate::types::{HotkeyMsg, UnlockResult};
-use crate::parser::cli_args_handler;
 
 use crossbeam::channel;
 use global_hotkey::{
@@ -33,17 +33,17 @@ fn unencrypted_main(
 ) -> anyhow::Result<()> {
     let (hk_tx, hk_rx) = channel::unbounded::<HotkeyMsg>();
     std::thread::spawn(move || {
-        let mgr = GlobalHotKeyManager::new().expect("hotkey manager");
-        let hk = HotKey::new(Some(Modifiers::SUPER), Code::KeyV);
-        mgr.register(hk).expect("register hotkey");
+        let global_hotkey_manager = GlobalHotKeyManager::new().expect("hotkey manager");
+        let global_hotkey = HotKey::new(Some(Modifiers::SUPER), Code::KeyV);
+        global_hotkey_manager.register(global_hotkey).expect("register hotkey");
 
-        let rx = GlobalHotKeyEvent::receiver();
+        let global_hotkey_rx = GlobalHotKeyEvent::receiver();
 
         // Debounce
         let mut last = Instant::now() - Duration::from_millis(500);
 
         loop {
-            if let Ok(ev) = rx.recv() {
+            if let Ok(ev) = global_hotkey_rx.recv() {
                 if ev.state == HotKeyState::Pressed && last.elapsed() > Duration::from_millis(250) {
                     let _ = hk_tx.send(HotkeyMsg::ToggleWindow);
                     last = Instant::now();
@@ -138,16 +138,15 @@ fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
 
     match outcome {
         UnlockResult::Unlocked { key, nonce } => {
-            return Ok((key, nonce));
+            Ok((key, nonce))
         }
         UnlockResult::Cancelled => {
-            return Err(anyhow::anyhow!("Failed to unlock ClipVault: {outcome:?}"));
+            Err(anyhow::anyhow!("Failed to unlock ClipVault: {outcome:?}"))
         }
     }
 }
 
 fn main() -> anyhow::Result<()> {
-
     cli_args_handler();
 
     let (activate_tx, activate_rx) = crossbeam::channel::unbounded();
@@ -168,5 +167,5 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    return Ok(());
+    Ok(())
 }

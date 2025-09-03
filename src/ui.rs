@@ -217,11 +217,10 @@ impl eframe::App for ClipAppLocked {
 
 pub struct ClipApp {
     tray: std::sync::Arc<tray::Tray>,
-    rx: crossbeam::channel::Receiver<ClipboardEntry>,
+    clipboard_rx: crossbeam::channel::Receiver<ClipboardEntry>,
     store: Store,
     filter: String,
     tex_cache: HashMap<String, egui::TextureHandle>,
-
     activate_rx: crossbeam::channel::Receiver<()>,
     hotkey_rx: Receiver<HotkeyMsg>,
     window_visible: bool,
@@ -232,14 +231,14 @@ pub struct ClipApp {
 impl ClipApp {
     pub fn new(
         tray: std::sync::Arc<tray::Tray>,
-        rx: crossbeam::channel::Receiver<ClipboardEntry>,
+        clipboard_rx: crossbeam::channel::Receiver<ClipboardEntry>,
         store: Store,
         hotkey_rx: Receiver<HotkeyMsg>,
         activate_rx: crossbeam::channel::Receiver<()>,
     ) -> Self {
         Self {
             tray,
-            rx,
+            clipboard_rx: clipboard_rx,
             store,
             activate_rx,
             filter: String::new(),
@@ -359,7 +358,7 @@ impl eframe::App for ClipApp {
 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
 
-        while let Ok(entry) = self.rx.try_recv() {
+        while let Ok(entry) = self.clipboard_rx.try_recv() {
             self.store.put(entry.ts, entry.content.clone());
         }
 

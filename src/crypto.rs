@@ -1,7 +1,5 @@
 use anyhow::anyhow;
-use argon2::{
-    Argon2,
-};
+use argon2::Argon2;
 use chacha20poly1305::{
     XChaCha20Poly1305,
     aead::{Aead, NewAead},
@@ -16,7 +14,7 @@ pub fn derive_save_nonce(key: &[u8; 32], base_nonce: &[u8; 24], counter: u64) ->
     let mut nonce = [0u8; 24];
     nonce.copy_from_slice(&out.as_bytes()[..24]);
 
-    return nonce;
+    nonce
 }
 
 pub fn derivate_crypto_params(passphrase: String) -> ([u8; 32], [u8; 24]) {
@@ -45,7 +43,7 @@ pub fn encrypt_data_to_file(
         .encrypt(nonce.into(), file_data.as_ref())
         .map_err(|err| anyhow!("Encrypting small file: {}", err))?;
 
-    fs::write(&dist, encrypted_file)?;
+    fs::write(dist, encrypted_file)?;
 
     Ok(())
 }
@@ -69,9 +67,7 @@ pub fn decrypt_file(
 
     let decrypted_data = match cipher.decrypt(nonce.into(), file_data.as_ref()) {
         Ok(data) => data,
-        Err(err) => {
-            return (Err(anyhow!("Decrypting small file: {}", err)), Vec::new())
-        },
+        Err(err) => return (Err(anyhow!("Decrypting small file: {}", err)), Vec::new()),
     };
 
     (Ok(()), decrypted_data)

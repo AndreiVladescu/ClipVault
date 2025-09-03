@@ -1,10 +1,8 @@
-
 use crate::assets::ICON_TRAY;
 
 use tray_icon::{
     TrayIconBuilder,
-    menu::{Menu, MenuEvent as 
-        TrayMenuEvent, MenuId, MenuItem},
+    menu::{Menu, MenuEvent as TrayMenuEvent, MenuId, MenuItem},
 };
 
 #[cfg(target_os = "windows")]
@@ -39,7 +37,8 @@ impl Tray {
                 menu.append(&quit).unwrap();
 
                 let icon = crate::assets::get_bytes(ICON_TRAY)
-                    .ok_or_else(|| anyhow::anyhow!("missing embedded app icon")).unwrap();
+                    .ok_or_else(|| anyhow::anyhow!("missing embedded app icon"))
+                    .unwrap();
                 let icon = crate::assets::tray_icon_from_png(&icon).unwrap();
 
                 let _tray_icon = TrayIconBuilder::new()
@@ -70,7 +69,8 @@ impl Tray {
             menu.append(&quit)?;
 
             let icon = crate::assets::get_bytes(ICON_TRAY)
-                .ok_or_else(|| anyhow::anyhow!("missing embedded app icon")).unwrap();
+                .ok_or_else(|| anyhow::anyhow!("missing embedded app icon"))
+                .unwrap();
             let icon = crate::assets::tray_icon_from_png(&icon).unwrap();
 
             let tray_icon = TrayIconBuilder::new()

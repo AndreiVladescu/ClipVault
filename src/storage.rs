@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-use std::fs;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use std::fs;
 
 use crate::clip::content_key;
+use crate::crypto::{decrypt_file, derive_save_nonce, encrypt_data_to_file};
 use crate::paths::history_path;
-use crate::crypto::{derive_save_nonce, encrypt_data_to_file, decrypt_file};
 use crate::types::{ClipboardContent, ClipboardEntry, FileModel, Meta};
 
 const AUTOSAVE_OPS_THRESHOLD: usize = 10;
@@ -17,7 +17,10 @@ fn meta_path() -> std::path::PathBuf {
 fn load_meta() -> Result<Meta> {
     let p = meta_path();
     if !p.exists() {
-        return Ok(Meta { version: 1, next_counter: 1 });
+        return Ok(Meta {
+            version: 1,
+            next_counter: 1,
+        });
     }
     let bytes = std::fs::read(p)?;
     Ok(serde_json::from_slice(&bytes)?)
@@ -61,11 +64,7 @@ impl Store {
         let (entries, index) = if path.exists() {
             let try_with = |ctr: u64| -> Result<Vec<ClipboardEntry>> {
                 let nonce = derive_save_nonce(&key, &base_nonce, ctr);
-                let (res, bytes) = decrypt_file(
-                    path.to_str().unwrap(),
-                    &key,
-                    &nonce,
-                );
+                let (res, bytes) = decrypt_file(path.to_str().unwrap(), &key, &nonce);
                 res?;
                 let model: FileModel = serde_json::from_slice(&bytes)?;
                 Ok(model.entries)
@@ -104,8 +103,9 @@ impl Store {
         })
     }
 
-
-    pub fn entries(&self) -> &Vec<ClipboardEntry> { &self.entries }
+    pub fn entries(&self) -> &Vec<ClipboardEntry> {
+        &self.entries
+    }
 
     pub fn put(&mut self, ts: DateTime<Utc>, content: ClipboardContent) {
         let k = content_key(&content);
@@ -130,19 +130,27 @@ impl Store {
     }
 
     pub fn force_save(&mut self) -> Result<()> {
-        if !self.dirty { return Ok(()); }
+        if !self.dirty {
+            return Ok(());
+        }
 
         let path = history_path();
         let tmp_enc = path.with_extension("json.tmp"); // write-then-rename
 
-        let model = FileModel { version: 1, entries: self.entries.clone() };
+        let model = FileModel {
+            version: 1,
+            entries: self.entries.clone(),
+        };
         let json = serde_json::to_vec(&model)?;
         let nonce = derive_save_nonce(&self.key, &self.base_nonce, self.next_counter);
 
         encrypt_data_to_file(&json, tmp_enc.to_str().unwrap(), &self.key, &nonce)?;
         std::fs::rename(&tmp_enc, &path)?;
         self.next_counter = self.next_counter.saturating_add(1);
-        store_meta(&Meta { version: 1, next_counter: self.next_counter })?;
+        store_meta(&Meta {
+            version: 1,
+            next_counter: self.next_counter,
+        })?;
 
         self.dirty = false;
         self.ops_since_save = 0;

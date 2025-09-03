@@ -1,5 +1,5 @@
-use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 
 const ACTIVATE_ADDR: &str = "127.0.0.1:57577";
 

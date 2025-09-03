@@ -7,7 +7,7 @@ pub enum CliArgs {
     NoArguments,
     Help,
     CleanHistory,
-    Unknown
+    Unknown,
 }
 
 fn cli_args_parser() -> anyhow::Result<CliArgs> {
@@ -18,7 +18,7 @@ fn cli_args_parser() -> anyhow::Result<CliArgs> {
         match args[1].as_str() {
             "--help" | "-h" => Ok(CliArgs::Help),
             "--clean-history" | "-c" => Ok(CliArgs::CleanHistory),
-            _ => Ok(CliArgs::Unknown)
+            _ => Ok(CliArgs::Unknown),
         }
     } else {
         Ok(CliArgs::NoArguments)
@@ -28,7 +28,7 @@ fn cli_args_parser() -> anyhow::Result<CliArgs> {
 pub fn cli_args_handler() {
     let cli_args: CliArgs = cli_args_parser().unwrap();
     match cli_args {
-        CliArgs::NoArguments => {}, // Nothing, continue as usual
+        CliArgs::NoArguments => {} // Nothing, continue as usual
         CliArgs::Help => {
             println!("ClipVault - A secure clipboard manager");
             println!();
