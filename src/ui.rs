@@ -363,6 +363,14 @@ impl eframe::App for ClipApp {
             self.store.put(entry.ts, entry.content.clone());
         }
 
+        let filter_id = egui::Id::new("filter_input");
+        let focus_filter = ctx.input(|input_state| {
+            input_state.modifiers.ctrl && input_state.key_pressed(egui::Key::F)
+        });
+        if focus_filter {
+            ctx.memory_mut(|m| m.request_focus(filter_id));
+        }
+
         // Top panel
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -408,7 +416,8 @@ impl eframe::App for ClipApp {
 
                 let edit = egui::TextEdit::singleline(&mut self.filter)
                     .desired_width(f32::INFINITY)
-                    .font(egui::FontId::proportional(18.0));
+                    .font(egui::FontId::proportional(18.0))
+                    .id(filter_id);
 
                 ui.add_sized([avail, h], edit);
 
