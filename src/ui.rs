@@ -12,8 +12,8 @@ use anyhow::anyhow;
 use chrono::Utc;
 use crossbeam::channel::Receiver;
 use egui::{RichText, StrokeKind};
-use notify_rust::{Hint, Notification, Timeout, Urgency};
-use std::collections::HashMap;
+use notify_rust::{Notification, Timeout, Urgency};
+use std::{collections::HashMap, thread, time::Duration};
 
 pub struct ClipAppLocked {
     passphrase: String,
@@ -161,18 +161,22 @@ impl ClipAppLocked {
             }
         }
     }
+
     fn notify_error(&self, msg: &str) {
-        let res = Notification::new()
-            .appname("ClipVault")
+        match Notification::new()
             .summary("ClipVault")
             .body(msg)
-            .urgency(Urgency::Critical)
+            .urgency(Urgency::Normal)
             .timeout(Timeout::Milliseconds(4000))
-            .hint(Hint::Transient(true))
-            .hint(Hint::Category("im.received".into()))
-            .show();
-        if res.is_err() {
-            println!("Failed to show notification.");
+            .show()
+        {
+            Ok(handle) => {
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(4500));
+                    drop(handle);
+                });
+            }
+            Err(e) => eprintln!("Notification failed: {e}"),
         }
     }
 }
