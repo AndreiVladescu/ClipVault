@@ -11,7 +11,7 @@ use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg, Meta, UnlockResu
 use anyhow::anyhow;
 use chrono::Utc;
 use crossbeam::channel::Receiver;
-use egui::{RichText, StrokeKind};
+use egui::{RichText, StrokeKind, text::{CCursor, CCursorRange}};
 use notify_rust::{Notification, Timeout, Urgency};
 use std::{collections::HashMap, thread, time::Duration};
 
@@ -21,6 +21,7 @@ pub struct ClipAppLocked {
     nonce: [u8; 24],
     loaded_crypto_params: bool,
     create_mode: bool,
+    focus_password_done: bool,
 
     outcome_tx: Option<crossbeam::channel::Sender<UnlockResult>>,
     outcome_sent: bool,
@@ -34,6 +35,7 @@ impl ClipAppLocked {
             nonce: [0; 24],
             loaded_crypto_params: false,
             create_mode: !history_path().exists(),
+            focus_password_done: false,
             outcome_tx: Some(outcome_tx),
             outcome_sent: false,
         }
@@ -101,12 +103,22 @@ impl ClipAppLocked {
 
             let text_font = egui::FontId::proportional(eye_side * 0.55);
 
-            let _ = ui.add_sized(
-                [ui.available_width(), eye_side],
-                egui::TextEdit::singleline(&mut self.passphrase)
-                    .password(!held)
-                    .font(text_font),
-            );
+            let mut out = egui::TextEdit::singleline(&mut self.passphrase)
+                .password(!held)
+                .font(text_font)
+                .show(ui);
+
+            // Auto-focus on the text input field once 
+            if !self.focus_password_done {
+                out.response.request_focus();
+                if out.response.gained_focus() || out.response.has_focus() {
+                    out.state.cursor.set_char_range(Some(
+                        CCursorRange::two(CCursor::new(0), CCursor::new(self.passphrase.len()))
+                    ));
+                    out.state.store(ui.ctx(), out.response.id);
+                }
+                self.focus_password_done = true;
+            }
 
             if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 submit = true;
