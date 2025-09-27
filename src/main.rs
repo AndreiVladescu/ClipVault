@@ -10,6 +10,7 @@ mod storage;
 mod tray;
 mod types;
 mod ui;
+mod prefs;
 
 use crate::assets::{ICON_TRAY, get_bytes, icon_data_from_png};
 use crate::clip::{clipboard_entry_hash, spawn_watcher};
@@ -82,6 +83,9 @@ fn unencrypted_main(
     let tray = std::sync::Arc::new(tray::Tray::new()?);
     let tray_clone = tray.clone();
 
+    let p = prefs::load();
+    let auto_launch = p.auto_launch;
+
     let res = eframe::run_native(
         "ClipVault",
         options,
@@ -92,6 +96,7 @@ fn unencrypted_main(
                 store,
                 hk_rx,
                 activate_rx,
+                auto_launch
             )))
         }),
     );

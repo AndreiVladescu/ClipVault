@@ -7,6 +7,7 @@ use crate::storage::Store;
 use crate::tray;
 use crate::tray::TrayEvent;
 use crate::types::{ClipboardContent, ClipboardEntry, HotkeyMsg, Meta, UnlockResult};
+use crate::prefs;
 
 use anyhow::anyhow;
 use chrono::Utc;
@@ -52,7 +53,7 @@ impl ClipAppLocked {
         let path = history_path();
         let meta_path = path.with_extension("meta.json");
 
-        // helper to attempt a decrypt with a given nonce
+        // Helper to attempt a decrypt with a given nonce
         let try_nonce = |nonce: [u8; 24]| -> anyhow::Result<()> {
             decrypt_file(path.to_str().unwrap(), &self.key, &nonce).0
         };
@@ -238,6 +239,7 @@ pub struct ClipApp {
     window_visible: bool,
     show_settings: bool,
     show_timestamps: bool,
+    auto_launch: bool,
 }
 
 impl ClipApp {
@@ -247,6 +249,7 @@ impl ClipApp {
         store: Store,
         hotkey_rx: Receiver<HotkeyMsg>,
         activate_rx: crossbeam::channel::Receiver<()>,
+        auto_launch: bool,
     ) -> Self {
         Self {
             tray,
@@ -259,6 +262,7 @@ impl ClipApp {
             show_timestamps: false,
             hotkey_rx,
             window_visible: false,
+            auto_launch
         }
     }
 
@@ -451,6 +455,16 @@ impl eframe::App for ClipApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
+                    let prev_auto = self.auto_launch;
+                    ui.checkbox(&mut self.auto_launch, "Auto-launch on login");
+                    if self.auto_launch != prev_auto {
+                        if let Err(e) = prefs::set_autostart(self.auto_launch) {
+                            eprintln!("Failed to set autostart: {e}");
+                            self.auto_launch = prev_auto;
+                        } else {
+                            let _ = prefs::save(&prefs::Prefs { auto_launch: self.auto_launch });
+                        }
+                    }
                     ui.checkbox(&mut self.show_timestamps, "Show timestamps");
                     if ui.button("Save now").clicked() {
                         if let Err(e) = self.store.force_save() {
