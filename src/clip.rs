@@ -3,6 +3,9 @@ use blake3::Hash;
 use chrono::Utc;
 use clipboard_master::{CallbackResult, ClipboardHandler, Master};
 use crossbeam::channel::Sender;
+use egui::Context;
+use once_cell::sync::OnceCell;
+use std::sync::Arc;
 use std::{io, thread, time::Duration};
 
 use crate::img::{image_to_png, png_to_imagedata};
@@ -30,7 +33,12 @@ pub fn set_clipboard(content: &ClipboardContent) -> Result<(), arboard::Error> {
     }
 }
 
-fn try_capture(clipboard: &mut Clipboard, tx: &Sender<ClipboardEntry>, last_hash: &mut Option<Hash>) {
+fn try_capture(
+    clipboard: &mut Clipboard,
+    tx: &Sender<ClipboardEntry>,
+    last_hash: &mut Option<Hash>,
+    wake: &Arc<OnceCell<Context>>,
+) {
     let content = if let Ok(txt) = clipboard.get_text() {
         ClipboardContent::Text(txt)
     } else if let Ok(img) = clipboard.get_image() {
@@ -43,6 +51,9 @@ fn try_capture(clipboard: &mut Clipboard, tx: &Sender<ClipboardEntry>, last_hash
     if Some(h) != *last_hash {
         let _ = tx.send(ClipboardEntry { ts: Utc::now(), content });
         *last_hash = Some(h);
+        if let Some(ctx) = wake.get() {
+            ctx.request_repaint();
+        }
     }
 }
 
@@ -50,11 +61,12 @@ struct ClipWatcher {
     tx: Sender<ClipboardEntry>,
     last_hash: Option<Hash>,
     clipboard: Clipboard,
+    wake: Arc<OnceCell<Context>>,
 }
 
 impl ClipboardHandler for ClipWatcher {
     fn on_clipboard_change(&mut self) -> CallbackResult {
-        try_capture(&mut self.clipboard, &self.tx, &mut self.last_hash);
+        try_capture(&mut self.clipboard, &self.tx, &mut self.last_hash, &self.wake);
         CallbackResult::Next
     }
 
@@ -64,7 +76,7 @@ impl ClipboardHandler for ClipWatcher {
     }
 }
 
-fn polling_watcher(tx: Sender<ClipboardEntry>, mut last_hash: Option<Hash>) {
+fn polling_watcher(tx: Sender<ClipboardEntry>, mut last_hash: Option<Hash>, wake: Arc<OnceCell<Context>>) {
     let mut clipboard = match Clipboard::new() {
         Ok(c) => c,
         Err(e) => {
@@ -73,12 +85,12 @@ fn polling_watcher(tx: Sender<ClipboardEntry>, mut last_hash: Option<Hash>) {
         }
     };
     loop {
-        try_capture(&mut clipboard, &tx, &mut last_hash);
+        try_capture(&mut clipboard, &tx, &mut last_hash, &wake);
         thread::sleep(Duration::from_millis(500));
     }
 }
 
-pub fn spawn_watcher(tx: Sender<ClipboardEntry>, last_hash: Option<Hash>) {
+pub fn spawn_watcher(tx: Sender<ClipboardEntry>, last_hash: Option<Hash>, wake: Arc<OnceCell<Context>>) {
     thread::spawn(move || {
         let clipboard = match Clipboard::new() {
             Ok(c) => c,
@@ -92,6 +104,7 @@ pub fn spawn_watcher(tx: Sender<ClipboardEntry>, last_hash: Option<Hash>) {
             tx: tx.clone(),
             last_hash,
             clipboard,
+            wake: wake.clone(),
         };
 
         match Master::new(watcher) {
@@ -99,12 +112,12 @@ pub fn spawn_watcher(tx: Sender<ClipboardEntry>, last_hash: Option<Hash>) {
                 if let Err(e) = master.run() {
                     // X11 not available (e.g. pure Wayland): fall back to polling
                     eprintln!("event-driven clipboard unavailable ({e}), falling back to polling");
-                    polling_watcher(tx, last_hash);
+                    polling_watcher(tx, last_hash, wake);
                 }
             }
             Err(e) => {
                 eprintln!("clipboard-master init failed ({e}), falling back to polling");
-                polling_watcher(tx, last_hash);
+                polling_watcher(tx, last_hash, wake);
             }
         }
     });

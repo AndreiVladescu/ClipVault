@@ -372,8 +372,6 @@ impl eframe::App for ClipApp {
             TrayEvent::None => {}
         }
 
-        ctx.request_repaint_after(std::time::Duration::from_millis(100));
-
         while let Ok(entry) = self.clipboard_rx.try_recv() {
             self.store.put(entry.ts, entry.content.clone());
         }

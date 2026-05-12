@@ -20,19 +20,24 @@ use crate::storage::Store;
 use crate::types::{HotkeyMsg, UnlockResult};
 
 use crossbeam::channel;
+use egui::Context;
 use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
     hotkey::{Code, HotKey, Modifiers},
 };
-
+use once_cell::sync::OnceCell;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn unencrypted_main(
     key: [u8; 32],
     nonce: [u8; 24],
     activate_rx: crossbeam::channel::Receiver<()>,
+    wake: Arc<OnceCell<Context>>,
 ) -> anyhow::Result<()> {
     let (hk_tx, hk_rx) = channel::unbounded::<HotkeyMsg>();
+
+    let wake_hk = wake.clone();
     std::thread::spawn(move || {
         let global_hotkey_manager = GlobalHotKeyManager::new().expect("hotkey manager");
         let global_hotkey = HotKey::new(Some(Modifiers::SUPER), Code::KeyV);
@@ -47,6 +52,9 @@ fn unencrypted_main(
             if let Ok(ev) = global_hotkey_rx.recv() {
                 if ev.state == HotKeyState::Pressed && last.elapsed() > Duration::from_millis(250) {
                     let _ = hk_tx.send(HotkeyMsg::ToggleWindow);
+                    if let Some(ctx) = wake_hk.get() {
+                        ctx.request_repaint();
+                    }
                     last = Instant::now();
                 }
             }
@@ -60,7 +68,7 @@ fn unencrypted_main(
         .map(|e| clipboard_entry_hash(&e.content));
 
     let (tx, rx) = crossbeam::channel::unbounded();
-    spawn_watcher(tx, last_hash);
+    spawn_watcher(tx, last_hash, wake.clone());
 
     let icon = get_bytes(ICON_TRAY)
         .and_then(|b| icon_data_from_png(&b))
@@ -80,7 +88,7 @@ fn unencrypted_main(
         ..Default::default()
     };
 
-    let tray = std::sync::Arc::new(tray::Tray::new()?);
+    let tray = std::sync::Arc::new(tray::Tray::new(wake.clone())?);
     let tray_clone = tray.clone();
 
     let p = prefs::load();
@@ -89,14 +97,16 @@ fn unencrypted_main(
     let res = eframe::run_native(
         "ClipVault",
         options,
-        Box::new(move |_cc| {
+        Box::new(move |cc| {
+            // Publish the context so all background threads can call request_repaint().
+            let _ = wake.set(cc.egui_ctx.clone());
             Ok::<Box<dyn eframe::App>, _>(Box::new(ui::ClipApp::new(
                 tray_clone,
                 rx,
                 store,
                 hk_rx,
                 activate_rx,
-                auto_launch
+                auto_launch,
             )))
         }),
     );
@@ -142,9 +152,7 @@ fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
         .unwrap_or(UnlockResult::Cancelled);
 
     match outcome {
-        UnlockResult::Unlocked { key, nonce } => {
-            Ok((key, nonce))
-        }
+        UnlockResult::Unlocked { key, nonce } => Ok((key, nonce)),
         UnlockResult::Cancelled => {
             Err(anyhow::anyhow!("Failed to unlock ClipVault: {outcome:?}"))
         }
@@ -154,15 +162,17 @@ fn encrypted_main() -> anyhow::Result<([u8; 32], [u8; 24])> {
 fn main() -> anyhow::Result<()> {
     cli_args_handler();
 
+    let wake: Arc<OnceCell<Context>> = Arc::new(OnceCell::new());
+
     let (activate_tx, activate_rx) = crossbeam::channel::unbounded();
-    if !setup_single_instance(activate_tx.clone()) {
+    if !setup_single_instance(activate_tx.clone(), wake.clone()) {
         return Ok(());
     }
 
     let crypto_params = encrypted_main();
     match crypto_params {
         Ok((key, nonce)) => {
-            if let Err(e) = unencrypted_main(key, nonce, activate_rx) {
+            if let Err(e) = unencrypted_main(key, nonce, activate_rx, wake) {
                 eprintln!("Error in unencrypted main: {e}");
                 return Err(e);
             }
