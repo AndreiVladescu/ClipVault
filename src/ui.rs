@@ -1,7 +1,7 @@
 use crate::assets::{ICON_IMAGE_FILTER, ICON_SETTINGS, load_texture_from_asset};
 use crate::clip::{content_key, set_clipboard};
 use crate::crypto::{decrypt_file, derivate_crypto_params, derive_save_nonce};
-use crate::img::base64_to_imagedata;
+use crate::img::png_to_imagedata;
 use crate::paths::history_path;
 use crate::storage::Store;
 use crate::tray;
@@ -286,23 +286,23 @@ impl ClipApp {
     }
 }
 
-fn ensure_texture_for_b64(
+fn ensure_texture_for_png(
     cache: &mut HashMap<String, egui::TextureHandle>,
     ctx: &egui::Context,
     key: &str,
-    b64: &str,
+    bytes: &[u8],
 ) {
     if cache.contains_key(key) {
         return;
     }
 
-    if let Ok(img) = base64_to_imagedata(b64) {
+    if let Ok(img) = png_to_imagedata(bytes) {
         let color: egui::ColorImage =
             egui::ColorImage::from_rgba_unmultiplied([img.width, img.height], &img.bytes);
         let tex: egui::TextureHandle = ctx.load_texture(
             format!("thumb-{key}"),
             color,
-            egui::TextureOptions::LINEAR, // smooth when scaled down
+            egui::TextureOptions::LINEAR,
         );
         cache.insert(key.to_owned(), tex);
     }
@@ -494,7 +494,7 @@ impl eframe::App for ClipApp {
                     let entry: ClipboardEntry = items[idx].clone();
 
                     if images_only {
-                        if !matches!(entry.content, ClipboardContent::ImageBase64(_)) {
+                        if !matches!(entry.content, ClipboardContent::Image(_)) {
                             continue;
                         }
                     } else if !q.is_empty() {
@@ -504,14 +504,14 @@ impl eframe::App for ClipApp {
                                     continue;
                                 }
                             }
-                            ClipboardContent::ImageBase64(_) => continue,
+                            ClipboardContent::Image(_) => continue,
                         }
                     }
 
                     let (_key, tex_opt) = match &entry.content {
-                        ClipboardContent::ImageBase64(b64) => {
+                        ClipboardContent::Image(bytes) => {
                             let k = content_key(&entry.content);
-                            ensure_texture_for_b64(&mut self.tex_cache, ctx, &k, b64);
+                            ensure_texture_for_png(&mut self.tex_cache, ctx, &k, bytes);
                             let handle = self.tex_cache.get(&k).cloned();
                             (Some(k), handle)
                         }
@@ -545,7 +545,7 @@ impl eframe::App for ClipApp {
                                     pending_restore = Some(entry.clone());
                                 }
                             }
-                            (ClipboardContent::ImageBase64(_), Some(tex)) => {
+                            (ClipboardContent::Image(_), Some(tex)) => {
                                 let [w, h] = tex.size();
                                 let (w, h) = (w as f32, h as f32);
                                 let max_w = 512.0;
@@ -582,8 +582,8 @@ impl eframe::App for ClipApp {
                                 }
                             }
 
-                            (ClipboardContent::ImageBase64(b64), None) => {
-                                ui.label(format!("<image {} bytes>", b64.len()));
+                            (ClipboardContent::Image(bytes), None) => {
+                                ui.label(format!("<image {} bytes>", bytes.len()));
                             }
                         }
                     });
