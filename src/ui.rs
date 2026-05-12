@@ -351,11 +351,6 @@ impl eframe::App for ClipApp {
             self.show_main(ctx);
         }
 
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.hide_main(ctx);
-            return;
-        }
-
         while let Ok(msg) = self.hotkey_rx.try_recv() {
             match msg {
                 HotkeyMsg::ToggleWindow => self.toggle_main(ctx),
@@ -374,6 +369,17 @@ impl eframe::App for ClipApp {
 
         while let Ok(entry) = self.clipboard_rx.try_recv() {
             self.store.put(entry.ts, entry.content.clone());
+        }
+
+        // Don't render UI when hidden — prevents egui cursor-blink from
+        // scheduling continuous repaints while the window is invisible.
+        if !self.window_visible {
+            return;
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.hide_main(ctx);
+            return;
         }
 
         let filter_id = egui::Id::new("filter_input");
