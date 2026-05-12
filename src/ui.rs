@@ -14,7 +14,7 @@ use chrono::Utc;
 use crossbeam::channel::Receiver;
 use egui::{RichText, StrokeKind, text::{CCursor, CCursorRange}};
 use notify_rust::{Notification, Timeout, Urgency};
-use std::{collections::HashMap, thread, time::Duration};
+use std::{collections::{HashMap, HashSet}, thread, time::Duration};
 
 pub struct ClipAppLocked {
     passphrase: String,
@@ -476,7 +476,8 @@ impl eframe::App for ClipApp {
                 });
         }
 
-        let mut pending_restore: Option<ClipboardEntry> = None;
+        let mut pending_restore: Option<ClipboardContent> = None;
+        let mut touched: HashSet<String> = HashSet::new();
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -489,7 +490,7 @@ impl eframe::App for ClipApp {
                 let images_only = ctx.data_mut(|d| d.get_persisted::<bool>(id).unwrap_or(false));
                 let q: String = self.filter.to_lowercase();
                 for idx in (0..items.len()).rev() {
-                    let entry: ClipboardEntry = items[idx].clone();
+                    let entry = &items[idx];
 
                     if images_only {
                         if !matches!(entry.content, ClipboardContent::Image(_)) {
@@ -510,6 +511,7 @@ impl eframe::App for ClipApp {
                         ClipboardContent::Image(bytes) => {
                             let k = content_key(&entry.content);
                             ensure_texture_for_png(&mut self.tex_cache, ctx, &k, bytes);
+                            touched.insert(k.clone());
                             let handle = self.tex_cache.get(&k).cloned();
                             (Some(k), handle)
                         }
@@ -540,7 +542,7 @@ impl eframe::App for ClipApp {
                                 let resp = clickable_row(ui, &display_text);
 
                                 if resp.clicked() {
-                                    pending_restore = Some(entry.clone());
+                                    pending_restore = Some(entry.content.clone());
                                 }
                             }
                             (ClipboardContent::Image(_), Some(tex)) => {
@@ -576,7 +578,7 @@ impl eframe::App for ClipApp {
                                     StrokeKind::Inside,
                                 );
                                 if resp.clicked() {
-                                    pending_restore = Some(entry.clone());
+                                    pending_restore = Some(entry.content.clone());
                                 }
                             }
 
@@ -589,10 +591,12 @@ impl eframe::App for ClipApp {
             });
         });
 
-        if let Some(entry) = pending_restore {
-            let _ = set_clipboard(&entry.content);
+        self.tex_cache.retain(|k, _| touched.contains(k));
+
+        if let Some(content) = pending_restore {
+            let _ = set_clipboard(&content);
             let now = Utc::now();
-            self.store.put(now, entry.content.clone());
+            self.store.put(now, content);
         }
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

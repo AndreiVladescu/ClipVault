@@ -4,11 +4,12 @@ use std::collections::HashMap;
 use std::fs;
 
 use crate::clip::content_key;
-use crate::crypto::{decrypt_file, derive_save_nonce, encrypt_data_to_file};
+use crate::crypto::{decrypt_file, derive_save_nonce, encrypt_data};
 use crate::paths::history_path;
 use crate::types::{ClipboardContent, ClipboardEntry, FileModel, Meta};
 
 const AUTOSAVE_OPS_THRESHOLD: usize = 10;
+const MAX_ENTRIES: usize = 500;
 
 fn meta_path() -> std::path::PathBuf {
     history_path().with_extension("meta.json")
@@ -116,7 +117,12 @@ impl Store {
             self.rebuild_index();
         } else {
             self.entries.push(ClipboardEntry { ts, content });
-            self.index.insert(k, self.entries.len() - 1);
+            if self.entries.len() > MAX_ENTRIES {
+                self.entries.remove(0);
+                self.rebuild_index();
+            } else {
+                self.index.insert(k, self.entries.len() - 1);
+            }
         }
         self.mark_dirty();
         let _ = self.autosave_if_needed();
@@ -134,24 +140,24 @@ impl Store {
             return Ok(());
         }
 
-        let path = history_path();
-        let tmp_enc = path.with_extension("json.tmp"); // write-then-rename
-
         let model = FileModel {
             version: 1,
             entries: self.entries.clone(),
         };
         let json = serde_json::to_vec(&model)?;
         let nonce = derive_save_nonce(&self.key, &self.base_nonce, self.next_counter);
+        let encrypted = encrypt_data(&json, &self.key, &nonce)?;
 
-        encrypt_data_to_file(&json, tmp_enc.to_str().unwrap(), &self.key, &nonce)?;
-        std::fs::rename(&tmp_enc, &path)?;
-        self.next_counter = self.next_counter.saturating_add(1);
-        store_meta(&Meta {
-            version: 1,
-            next_counter: self.next_counter,
-        })?;
+        let new_counter = self.next_counter + 1;
+        let path = history_path();
+        std::thread::spawn(move || {
+            let tmp = path.with_extension("json.tmp");
+            if std::fs::write(&tmp, &encrypted).is_ok() && std::fs::rename(&tmp, &path).is_ok() {
+                let _ = store_meta(&Meta { version: 1, next_counter: new_counter });
+            }
+        });
 
+        self.next_counter = new_counter;
         self.dirty = false;
         self.ops_since_save = 0;
         Ok(())

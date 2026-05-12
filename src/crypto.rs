@@ -32,20 +32,15 @@ pub fn derivate_crypto_params(passphrase: String) -> ([u8; 32], [u8; 24]) {
     (key, nonce)
 }
 
-pub fn encrypt_data_to_file(
-    file_data: &Vec<u8>,
-    dist: &str,
+pub fn encrypt_data(
+    file_data: &[u8],
     key: &[u8; 32],
     nonce: &[u8; 24],
-) -> Result<(), anyhow::Error> {
+) -> Result<Vec<u8>, anyhow::Error> {
     let cipher = XChaCha20Poly1305::new(key.into());
-    let encrypted_file = cipher
-        .encrypt(nonce.into(), file_data.as_ref())
-        .map_err(|err| anyhow!("Encrypting small file: {}", err))?;
-
-    fs::write(dist, encrypted_file)?;
-
-    Ok(())
+    cipher
+        .encrypt(nonce.into(), file_data)
+        .map_err(|err| anyhow!("Encrypting data: {}", err))
 }
 
 pub fn decrypt_file(
